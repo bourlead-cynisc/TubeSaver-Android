@@ -52,21 +52,21 @@ class MainActivity : Activity() {
   super.onCreate(savedInstanceState)
   val root = LinearLayout(this).apply {
    orientation = LinearLayout.VERTICAL
-   setPadding(44, 96, 44, 60)
-   setBackgroundColor(Color.rgb(12,18,32))
+   setPadding(42, 74, 42, 64)
+   setBackgroundColor(Color.rgb(8,13,23))
   }
-  setContentView(ScrollView(this).apply { addView(root); isFillViewport = true; setBackgroundColor(Color.rgb(12,18,32)) })
-  window.statusBarColor = Color.rgb(12,18,32)
-  window.navigationBarColor = Color.rgb(12,18,32)
+  setContentView(ScrollView(this).apply { addView(root); isFillViewport = true; setBackgroundColor(Color.rgb(8,13,23)) })
+  window.statusBarColor = Color.rgb(8,13,23)
+  window.navigationBarColor = Color.rgb(8,13,23)
   fun label(s: String, size: Float = 16f): TextView = TextView(this).apply {
    text = s; textSize = size; setTextColor(Color.WHITE); setPadding(0,12,0,12)
   }
-  val hero = label("▶  TubeSaver", 30f).apply { setTypeface(null, Typeface.BOLD); setTextColor(Color.rgb(241,244,255)) }
+  val hero = label("◉  OFFTUBE", 32f).apply { setTypeface(null, Typeface.BOLD); setTextColor(Color.rgb(241,244,255)) }
   root.addView(hero)
-  root.addView(label("ВИДЕО И АУДИО НА ТЕЛЕФОНЕ", 12f))
-  val intro = label("Скачивайте в пару касаний", 23f).apply { setTypeface(null, Typeface.BOLD) }
+  root.addView(label("YOUR MEDIA. OFFLINE.", 12f).apply { setTextColor(Color.rgb(89,215,189)) })
+  val intro = label("Сохраняй. Смотри. Повторяй.", 23f).apply { setTypeface(null, Typeface.BOLD) }
   root.addView(intro)
-  root.addView(label("YouTube   •   VK Видео   •   RUTUBE", 14f).apply { setTextColor(Color.rgb(160,177,218)) })
+  root.addView(label("YouTube   /   VK Видео   /   RUTUBE", 14f).apply { setTextColor(Color.rgb(160,177,218)) })
   url = EditText(this).apply {
    hint = "Вставьте ссылку на видео"
    setSingleLine(true); setTextColor(Color.WHITE); setHintTextColor(Color.LTGRAY)
@@ -99,16 +99,16 @@ class MainActivity : Activity() {
    setOnClickListener { showQualityPopup() }
   }
   root.addView(qualityPicker, LinearLayout.LayoutParams(-1, -2))
-  button = Button(this).apply { text = "↓  СКАЧАТЬ НА ТЕЛЕФОН"; setTextColor(Color.WHITE); backgroundTintList = ColorStateList.valueOf(Color.rgb(94,112,245)) }
+  button = Button(this).apply { text = "↓  СОХРАНИТЬ ОФЛАЙН"; setTextColor(Color.WHITE); backgroundTintList = ColorStateList.valueOf(Color.rgb(27,180,155)) }
   root.addView(button, LinearLayout.LayoutParams(-1, 120))
-  button.backgroundTintList = ColorStateList.valueOf(Color.rgb(94,92,246))
-  root.addView(label("●  СОСТОЯНИЕ ЗАГРУЗКИ", 12f).apply { setTextColor(Color.rgb(169,184,222)) })
+  button.backgroundTintList = ColorStateList.valueOf(Color.rgb(27,180,155))
+  root.addView(label("●  ПРОЦЕСС", 12f).apply { setTextColor(Color.rgb(169,184,222)) })
   progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
   root.addView(progress, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
   status = label("Готово к загрузке", 15f)
   root.addView(status)
   button.setOnClickListener { download() }
-  val update = Button(this).apply { text = "Обновить движок yt-dlp"; setTextColor(Color.WHITE); backgroundTintList = ColorStateList.valueOf(Color.rgb(47,60,86)) }
+  val update = Button(this).apply { text = "Проверить обновление загрузчика"; setTextColor(Color.WHITE); backgroundTintList = ColorStateList.valueOf(Color.rgb(47,60,86)) }
   root.addView(update)
   update.setOnClickListener {
    update.isEnabled = false
@@ -179,7 +179,7 @@ class MainActivity : Activity() {
   if (link.isEmpty()) { status.text = "Вставьте ссылку для проверки качества"; return }
   val uri = android.net.Uri.parse(link)
   if (uri.scheme != "https" || !isSupportedHost(uri.host)) { status.text = "Нужна HTTPS-ссылка YouTube, VK Видео или RUTUBE"; return }
-  status.text = "Ожидание проверки ссылки..."
+  status.text = "Ссылку можно скачивать сразу. Проверяем качество в фоне..."
   val task = Runnable {
    checkStartedAt = android.os.SystemClock.elapsedRealtime()
    status.text = "Проверяем доступные форматы..."
@@ -194,6 +194,7 @@ class MainActivity : Activity() {
      req.addOption("--socket-timeout", "20")
      req.addOption("--retries", "2")
      req.addOption("--extractor-retries", "2")
+    req.addOption("--extractor-args", "youtube:player_client=android")
      val output = YoutubeDL.getInstance().execute(req).out
      val data = JSONObject(output.substring(output.indexOf('{')))
      val formats = data.optJSONArray("formats")
@@ -227,10 +228,10 @@ class MainActivity : Activity() {
   if (uri.scheme != "https" || !isSupportedHost(uri.host)) {
    status.text = "Введите HTTPS-ссылку YouTube, VK Видео или RUTUBE"; return
   }
-  if (readyLink != link || choices.isEmpty()) { status.text = "Сначала дождитесь проверки доступного качества"; return }
+  // Metadata is optional: start downloading immediately using the best available format.
   if (downloading) return
   downloading = true
-  val selected = choices.getOrNull(quality.selectedItemPosition)?.second
+  val selected = if (readyLink == link) choices.getOrNull(quality.selectedItemPosition)?.second else null
   button.isEnabled = false
   status.text = "Получаем потоки видео и звука..."
   val startTime = android.os.SystemClock.elapsedRealtime()
@@ -246,8 +247,9 @@ class MainActivity : Activity() {
     val req = YoutubeDLRequest(link)
     req.addOption("--no-playlist")
     req.addOption("--no-warnings")
+    req.addOption("--continue")
     req.addOption("--socket-timeout", "25")
-    req.addOption("--retries", "3")
+    req.addOption("--retries", "2")
     req.addOption("--fragment-retries", "3")
     req.addOption("--extractor-retries", "2")
     req.addOption("-P", dir.absolutePath)
@@ -288,7 +290,7 @@ class MainActivity : Activity() {
      val msg = first.message.orEmpty()
      val host = android.net.Uri.parse(link).host.orEmpty().lowercase()
      val youtube = host == "youtu.be" || host == "youtube.com" || host.endsWith(".youtube.com")
-     if (!youtube || !(msg.contains("403") || msg.contains("Sign in", true))) throw first
+     if (!youtube || !(msg.contains("403") || msg.contains("Sign in", true) || msg.contains("Requested format", true))) throw first
      runOnUiThread { progress.isIndeterminate = true; status.text = "YouTube отклонил запрос. Пробуем другой клиент..." }
      dir.listFiles()?.forEach { it.delete() }
      val fallback = YoutubeDLRequest(link)
