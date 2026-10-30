@@ -14,6 +14,6 @@ android {
  }
 }
 dependencies {
- implementation("com.github.yausername.youtubedl-android:library:0.17.1")
- implementation("com.github.yausername.youtubedl-android:ffmpeg:0.17.1")
+ implementation("io.github.junkfood02.youtubedl-android:library:0.18.1")
+ implementation("io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1")
 }
