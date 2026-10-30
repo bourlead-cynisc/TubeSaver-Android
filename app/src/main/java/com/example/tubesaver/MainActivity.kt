@@ -2,6 +2,11 @@ package com.example.tubesaver
 
 import android.app.Activity
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.text.TextWatcher
+import android.text.Editable
+import org.json.JSONObject
 import android.os.Environment
 import android.os.Build
 import android.content.ContentValues
@@ -25,11 +30,17 @@ class MainActivity : Activity() {
  private lateinit var status: TextView
  private lateinit var button: Button
  private lateinit var progress: ProgressBar
+ private val handler = Handler(Looper.getMainLooper())
+ private var pending: Runnable? = null
+ private var generation = 0
+ private var heights = listOf<Int>()
+ private var readyLink = ""
+ private val choices = mutableListOf<Pair<String, Int?>>()
  override fun onCreate(savedInstanceState: Bundle?) {
   super.onCreate(savedInstanceState)
   val root = LinearLayout(this).apply {
    orientation = LinearLayout.VERTICAL
-   setPadding(36, 64, 36, 40)
+   setPadding(36, 110, 36, 40)
    setBackgroundColor(Color.rgb(12,18,32))
   }
   setContentView(ScrollView(this).apply { addView(root); isFillViewport = true; setBackgroundColor(Color.rgb(12,18,32)) })
@@ -49,6 +60,11 @@ class MainActivity : Activity() {
    setPadding(24,20,24,20)
   }
   root.addView(url, LinearLayout.LayoutParams(-1, 120))
+  url.addTextChangedListener(object : TextWatcher {
+   override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+   override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { scheduleCheck() }
+   override fun afterTextChanged(s: Editable?) {}
+  })
   val paste = label("Вставить из буфера обмена", 14f)
   paste.setTextColor(Color.rgb(155,177,255))
   paste.setPadding(0,20,0,25)
@@ -59,8 +75,7 @@ class MainActivity : Activity() {
   root.addView(paste)
   root.addView(label("КАЧЕСТВО", 12f))
   quality = Spinner(this)
-  quality.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item,
-   arrayOf("Лучшее качество", "1080p", "720p", "480p", "360p", "MP3"))
+  setChoices(emptyList())
   quality.setBackgroundColor(Color.rgb(230,235,250))
   root.addView(quality, LinearLayout.LayoutParams(-1, 110))
   button = Button(this).apply { text = "↓  СКАЧАТЬ НА ТЕЛЕФОН"; setTextColor(Color.WHITE); backgroundTintList = ColorStateList.valueOf(Color.rgb(94,112,245)) }
@@ -84,13 +99,74 @@ class MainActivity : Activity() {
   }
   root.addView(label("Сохраняйте только материалы, на которые у вас есть права.", 12f))
  }
+ private fun setChoices(values: List<Int>) {
+  heights = values
+  choices.clear()
+  if (values.isNotEmpty()) {
+   choices.add("Лучшее доступное качество" to null)
+   values.forEach { choices.add("${it}p" to it) }
+   choices.add("Аудио MP3" to -1)
+  } else {
+   choices.add("Сначала вставьте ссылку" to null)
+  }
+  quality.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, choices.map { it.first })
+ }
+ private fun scheduleCheck() {
+  generation++
+  val current = generation
+  pending?.let { handler.removeCallbacks(it) }
+  readyLink = ""
+  setChoices(emptyList())
+  val link = url.text.toString().trim()
+  if (link.isEmpty()) { status.text = "Вставьте ссылку для проверки качества"; return }
+  val uri = android.net.Uri.parse(link)
+  if (uri.scheme != "https" || !isSupportedHost(uri.host)) { status.text = "Нужна HTTPS-ссылка YouTube, VK Видео или RUTUBE"; return }
+  status.text = "Ожидание проверки ссылки..."
+  val task = Runnable {
+   status.text = "Проверяем доступные форматы..."
+   thread {
+    try {
+     YoutubeDL.getInstance().init(applicationContext)
+     val req = YoutubeDLRequest(link)
+     req.addOption("--dump-single-json")
+     req.addOption("--skip-download")
+     req.addOption("--no-playlist")
+     req.addOption("--no-warnings")
+     req.addOption("--socket-timeout", "15")
+     req.addOption("--retries", "1")
+     val output = YoutubeDL.getInstance().execute(req).out
+     val data = JSONObject(output.substring(output.indexOf('{')))
+     val formats = data.optJSONArray("formats")
+     val available = sortedSetOf<Int>(compareByDescending { it })
+     if (formats != null) for (i in 0 until formats.length()) {
+      val fmt = formats.optJSONObject(i) ?: continue
+      val height = fmt.optInt("height", 0)
+      if (height > 0 && fmt.optString("vcodec", "none") != "none") available.add(height)
+     }
+     if (available.isEmpty()) data.optInt("height", 0).takeIf { it > 0 }?.let { available.add(it) }
+     runOnUiThread {
+      if (current != generation) return@runOnUiThread
+      if (available.isEmpty()) { status.text = "Не удалось определить качество видео"; return@runOnUiThread }
+      readyLink = link
+      setChoices(available.toList())
+      status.text = "Найдено видео: ${data.optString("title", "Без названия")}. Доступно: ${available.joinToString { "${it}p" }}"
+     }
+    } catch (e: Exception) {
+     runOnUiThread { if (current == generation) status.text = friendlyError(e.message.orEmpty()) }
+    }
+   }
+  }
+  pending = task
+  handler.postDelayed(task, 850)
+ }
  private fun download() {
   val link = url.text.toString().trim()
   val uri = android.net.Uri.parse(link)
   if (uri.scheme != "https" || !isSupportedHost(uri.host)) {
    status.text = "Введите HTTPS-ссылку YouTube, VK Видео или RUTUBE"; return
   }
-  val selected = quality.selectedItemPosition
+  if (readyLink != link || choices.isEmpty()) { status.text = "Сначала дождитесь проверки доступного качества"; return }
+  val selected = choices.getOrNull(quality.selectedItemPosition)?.second
   button.isEnabled = false
   status.text = "Подготовка движка..."
   progress.progress = 0
@@ -106,15 +182,15 @@ class MainActivity : Activity() {
     req.addOption("--retries", "2")
     req.addOption("-P", dir.absolutePath)
     req.addOption("-o", "%(title).100s-%(id)s.%(ext)s")
-    if (selected == 5) {
+    if (selected == -1) {
      req.addOption("-x"); req.addOption("--audio-format", "mp3")
     } else {
-     val h = when(selected) { 1->1080; 2->720; 3->480; 4->360; else->null }
+     val h = selected
      req.addOption("-f", if (h == null) "bv*+ba/b" else "bv*[height<=${h}]+ba/b[height<=${h}]")
      req.addOption("--merge-output-format", "mp4")
     }
     YoutubeDL.getInstance().execute(req, "tube-${System.nanoTime()}") { p, _, _ ->
-     runOnUiThread { progress.progress = p.toInt().coerceIn(0,100); status.text = "Загрузка: ${p.toInt()}%" }
+     runOnUiThread { progress.progress = p.toInt().coerceIn(0,100); status.text = "Загрузка: ${p.toInt().coerceIn(0,100)}%" }
     }
     val result = dir.listFiles()?.filter { it.isFile && !it.name.endsWith(".part") && !it.name.endsWith(".ytdl") }?.maxByOrNull { it.lastModified() }
      ?: error("Файл не найден")
