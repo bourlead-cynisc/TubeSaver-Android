@@ -40,6 +40,7 @@ class MainActivity : Activity() {
  @Volatile private var engineError: String? = null
  private val engineLock = Any()
  private var lastTransfer = ""
+ private var downloading = false
  private var checkedAt = 0L
  private var checkStartedAt = 0L
  private var pending: Runnable? = null
@@ -190,8 +191,9 @@ class MainActivity : Activity() {
      req.addOption("--skip-download")
      req.addOption("--no-playlist")
      req.addOption("--no-warnings")
-     req.addOption("--socket-timeout", "8")
-     req.addOption("--retries", "0")
+     req.addOption("--socket-timeout", "20")
+     req.addOption("--retries", "2")
+     req.addOption("--extractor-retries", "2")
      val output = YoutubeDL.getInstance().execute(req).out
      val data = JSONObject(output.substring(output.indexOf('{')))
      val formats = data.optJSONArray("formats")
@@ -226,6 +228,8 @@ class MainActivity : Activity() {
    status.text = "Введите HTTPS-ссылку YouTube, VK Видео или RUTUBE"; return
   }
   if (readyLink != link || choices.isEmpty()) { status.text = "Сначала дождитесь проверки доступного качества"; return }
+  if (downloading) return
+  downloading = true
   val selected = choices.getOrNull(quality.selectedItemPosition)?.second
   button.isEnabled = false
   status.text = "Получаем потоки видео и звука..."
@@ -242,8 +246,10 @@ class MainActivity : Activity() {
     val req = YoutubeDLRequest(link)
     req.addOption("--no-playlist")
     req.addOption("--no-warnings")
-    req.addOption("--socket-timeout", "20")
-    req.addOption("--retries", "1")
+    req.addOption("--socket-timeout", "25")
+    req.addOption("--retries", "3")
+    req.addOption("--fragment-retries", "3")
+    req.addOption("--extractor-retries", "2")
     req.addOption("-P", dir.absolutePath)
     req.addOption("-o", "%(title).100s-%(id)s.%(ext)s")
     req.addOption("--newline")
@@ -280,15 +286,26 @@ class MainActivity : Activity() {
     val result = dir.listFiles()?.filter { it.isFile && (if (selected == -1) it.extension.equals("mp3", true) else it.extension.equals("mp4", true)) }?.maxByOrNull { it.lastModified() }
      ?: error("Файл не найден")
     val clean = if (result.name.endsWith(".webm.mp4", true)) File(result.parentFile, result.name.removeSuffix(".webm.mp4") + ".mp4").also { if (!result.renameTo(it)) error("Не удалось переименовать файл") } else result
+    if (clean.length() == 0L) error("Загруженный файл пуст")
+    if (selected != -1) verifyAudioTrack(clean)
     save(clean)
     clean.delete()
     runOnUiThread { progress.isIndeterminate = false; progress.progress = 100; status.text = "Сохранено: ${clean.name}" }
    } catch (e: Exception) {
     runOnUiThread { progress.isIndeterminate = false; status.text = friendlyError(e.message.orEmpty()) }
    } finally {
-    runOnUiThread { button.isEnabled = true }
+    runOnUiThread { downloading = false; button.isEnabled = true }
    }
   }
+ }
+ private fun verifyAudioTrack(file: File) {
+  val retriever = android.media.MediaMetadataRetriever()
+  try {
+   retriever.setDataSource(file.absolutePath)
+   val audio = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO)
+   val video = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO)
+   if (audio != "yes" || video != "yes") error("Файл без видео или звуковой дорожки. Сохранение отменено.")
+  } finally { retriever.release() }
  }
  private fun transferInfo(line: String): String? {
   val raw = line.substringAfter("TSBYTES:", "")
@@ -311,10 +328,13 @@ class MainActivity : Activity() {
  }
  private fun friendlyError(message: String): String = when {
   message.contains("No address associated with hostname", true) || message.contains("name resolution", true) -> "Ошибка DNS: сервер недоступен. Проверьте интернет, VPN и DNS. Попробуйте открыть ссылку в браузере."
-  message.contains("403") -> "Нет доступа к видео (403). Возможно, требуется авторизация."
+  message.contains("403") -> "Сервер отклонил запрос (403). Возможно, требуется авторизация или обновление движка."
   message.contains("Unsupported URL", true) -> "Движок пока не поддерживает эту ссылку."
   message.contains("Sign in", true) -> "Для этого видео нужна авторизация."
   message.contains("Requested format", true) -> "Нет подходящего видео со звуком. Попробуйте другое качество."
+  message.contains("timed out", true) || message.contains("timeout", true) -> "Сервер не ответил вовремя. Повторите попытку."
+  message.contains("429") -> "Сервер ограничил запросы (429). Повторите позже."
+  message.contains("Файл без видео") -> message
   else -> "Не удалось скачать видео: " + message.take(180)
  }
  private fun save(file: File) {
