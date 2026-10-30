@@ -36,6 +36,10 @@ class MainActivity : Activity() {
  private lateinit var progress: ProgressBar
  private lateinit var qualityPicker: TextView
  private val handler = Handler(Looper.getMainLooper())
+ @Volatile private var engineReady = false
+ @Volatile private var engineError: String? = null
+ private val engineLock = Any()
+ private var lastTransfer = ""
  private var pending: Runnable? = null
  private var generation = 0
  private var heights = listOf<Int>()
@@ -107,12 +111,23 @@ class MainActivity : Activity() {
    update.isEnabled = false
    status.text = "Проверка обновления..."
    thread {
-    try { YoutubeDL.getInstance().init(applicationContext); YoutubeDL.getInstance().updateYoutubeDL(applicationContext, UpdateChannel.STABLE); runOnUiThread { status.text = "Обновление проверено" } }
+    try { ensureEngine(); YoutubeDL.getInstance().updateYoutubeDL(applicationContext, UpdateChannel.STABLE); runOnUiThread { status.text = "Обновление проверено" } }
     catch (e: Exception) { runOnUiThread { status.text = "Не удалось обновить. Проверьте интернет." } }
     finally { runOnUiThread { update.isEnabled = true } }
    }
   }
   root.addView(label("Сохраняйте только материалы, на которые у вас есть права.", 12f).apply { setTextColor(Color.rgb(150,162,190)) })
+  progress.visibility = View.GONE
+  thread { try { ensureEngine() } catch (_: Exception) {} }
+ }
+ private fun ensureEngine() {
+  if (engineReady) return
+  synchronized(engineLock) {
+   if (!engineReady) {
+    try { YoutubeDL.getInstance().init(applicationContext); engineReady = true; engineError = null }
+    catch (e: Exception) { engineError = e.message; throw e }
+   }
+  }
  }
  private fun popupShape(color: Int, radius: Int, stroke: Int): GradientDrawable =
   GradientDrawable().apply {
@@ -166,14 +181,14 @@ class MainActivity : Activity() {
    status.text = "Проверяем доступные форматы..."
    thread {
     try {
-     YoutubeDL.getInstance().init(applicationContext)
+     ensureEngine()
      val req = YoutubeDLRequest(link)
      req.addOption("--dump-single-json")
      req.addOption("--skip-download")
      req.addOption("--no-playlist")
      req.addOption("--no-warnings")
-     req.addOption("--socket-timeout", "15")
-     req.addOption("--retries", "1")
+     req.addOption("--socket-timeout", "8")
+     req.addOption("--retries", "0")
      val output = YoutubeDL.getInstance().execute(req).out
      val data = JSONObject(output.substring(output.indexOf('{')))
      val formats = data.optJSONArray("formats")
@@ -198,7 +213,7 @@ class MainActivity : Activity() {
    }
   }
   pending = task
-  handler.postDelayed(task, 850)
+  handler.postDelayed(task, 450)
  }
  private fun download() {
   val link = url.text.toString().trim()
@@ -209,11 +224,14 @@ class MainActivity : Activity() {
   if (readyLink != link || choices.isEmpty()) { status.text = "Сначала дождитесь проверки доступного качества"; return }
   val selected = choices.getOrNull(quality.selectedItemPosition)?.second
   button.isEnabled = false
-  status.text = "Подготовка движка..."
+  status.text = "Подключаемся к источнику видео..."
+  progress.visibility = View.VISIBLE
+  progress.isIndeterminate = true
   progress.progress = 0
+  lastTransfer = ""
   thread {
    try {
-    YoutubeDL.getInstance().init(applicationContext)
+    ensureEngine()
     val dir = File(cacheDir, "downloads").apply { mkdirs() }
     dir.listFiles()?.forEach { it.delete() }
     val req = YoutubeDLRequest(link)
@@ -237,8 +255,19 @@ class MainActivity : Activity() {
     YoutubeDL.getInstance().execute(req, "tube-${System.nanoTime()}") { p, _, line ->
      val info = transferInfo(line)
      runOnUiThread {
-      if (p >= 0f) progress.progress = p.toInt().coerceIn(0,100)
-      status.text = if (info != null) "Загрузка: ${p.toInt().coerceIn(0,100)}%\n$info" else if (line.contains("Merger") || line.contains("VideoConvertor")) "Обработка видео..." else "Загрузка: ${p.toInt().coerceIn(0,100)}%"
+      if (info != null) {
+       lastTransfer = info
+       progress.isIndeterminate = false
+       progress.progress = p.toInt().coerceIn(0,100)
+       status.text = "Скачивание: ${p.toInt().coerceIn(0,100)}%\n$info"
+      } else if (line.contains("Merger", true) || line.contains("VideoConvertor", true) || line.contains("Fixup", true)) {
+       progress.isIndeterminate = true
+       status.text = "Обработка и сохранение MP4..."
+      } else if (line.contains("Destination:", true) || line.contains("[download]", true)) {
+       status.text = if (lastTransfer.isEmpty()) "Соединение установлено, ожидаем данные..." else "Скачивание...\n$lastTransfer"
+      } else if (lastTransfer.isEmpty()) {
+       status.text = "Получаем видеопоток от сервера..."
+      }
      }
     }
     val result = dir.listFiles()?.filter { it.isFile && (if (selected == -1) it.extension.equals("mp3", true) else it.extension.equals("mp4", true)) }?.maxByOrNull { it.lastModified() }
@@ -246,9 +275,9 @@ class MainActivity : Activity() {
     val clean = if (result.name.endsWith(".webm.mp4", true)) File(result.parentFile, result.name.removeSuffix(".webm.mp4") + ".mp4").also { if (!result.renameTo(it)) error("Не удалось переименовать файл") } else result
     save(clean)
     clean.delete()
-    runOnUiThread { progress.progress = 100; status.text = "Сохранено: ${clean.name}" }
+    runOnUiThread { progress.isIndeterminate = false; progress.progress = 100; status.text = "Сохранено: ${clean.name}" }
    } catch (e: Exception) {
-    runOnUiThread { status.text = friendlyError(e.message.orEmpty()) }
+    runOnUiThread { progress.isIndeterminate = false; status.text = friendlyError(e.message.orEmpty()) }
    } finally {
     runOnUiThread { button.isEnabled = true }
    }
