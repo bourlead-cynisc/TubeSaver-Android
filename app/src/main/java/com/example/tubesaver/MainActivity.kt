@@ -1,6 +1,9 @@
 package com.example.tubesaver
 
 import android.app.Activity
+import android.app.AlertDialog
+import android.graphics.Typeface
+import android.view.View
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -30,6 +33,7 @@ class MainActivity : Activity() {
  private lateinit var status: TextView
  private lateinit var button: Button
  private lateinit var progress: ProgressBar
+ private lateinit var qualityPicker: TextView
  private val handler = Handler(Looper.getMainLooper())
  private var pending: Runnable? = null
  private var generation = 0
@@ -40,7 +44,7 @@ class MainActivity : Activity() {
   super.onCreate(savedInstanceState)
   val root = LinearLayout(this).apply {
    orientation = LinearLayout.VERTICAL
-   setPadding(36, 110, 36, 40)
+   setPadding(44, 96, 44, 60)
    setBackgroundColor(Color.rgb(12,18,32))
   }
   setContentView(ScrollView(this).apply { addView(root); isFillViewport = true; setBackgroundColor(Color.rgb(12,18,32)) })
@@ -49,10 +53,12 @@ class MainActivity : Activity() {
   fun label(s: String, size: Float = 16f): TextView = TextView(this).apply {
    text = s; textSize = size; setTextColor(Color.WHITE); setPadding(0,12,0,12)
   }
-  root.addView(label("↓  TubeSaver", 29f))
+  val hero = label("▶  TubeSaver", 30f).apply { setTypeface(null, Typeface.BOLD); setTextColor(Color.rgb(241,244,255)) }
+  root.addView(hero)
   root.addView(label("ВИДЕО И АУДИО НА ТЕЛЕФОНЕ", 12f))
-  root.addView(label("Скачать видео", 24f))
-  root.addView(label("YouTube  •  VK Видео  •  RUTUBE", 15f))
+  val intro = label("Скачивайте в пару касаний", 23f).apply { setTypeface(null, Typeface.BOLD) }
+  root.addView(intro)
+  root.addView(label("YouTube   •   VK Видео   •   RUTUBE", 14f).apply { setTextColor(Color.rgb(160,177,218)) })
   url = EditText(this).apply {
    hint = "Вставьте ссылку на видео"
    setSingleLine(true); setTextColor(Color.WHITE); setHintTextColor(Color.LTGRAY)
@@ -76,11 +82,19 @@ class MainActivity : Activity() {
   root.addView(label("КАЧЕСТВО", 12f))
   quality = Spinner(this)
   setChoices(emptyList())
-  quality.setBackgroundColor(Color.rgb(230,235,250))
-  root.addView(quality, LinearLayout.LayoutParams(-1, 110))
+  quality.visibility = View.GONE
+  root.addView(quality)
+  qualityPicker = label("⌄  Вставьте ссылку, чтобы выбрать качество", 16f).apply {
+   setTextColor(Color.WHITE)
+   background = popupShape(Color.rgb(31,43,70), 18, Color.rgb(82,103,158))
+   setPadding(30,26,30,26)
+   setOnClickListener { showQualityPopup() }
+  }
+  root.addView(qualityPicker, LinearLayout.LayoutParams(-1, -2))
   button = Button(this).apply { text = "↓  СКАЧАТЬ НА ТЕЛЕФОН"; setTextColor(Color.WHITE); backgroundTintList = ColorStateList.valueOf(Color.rgb(94,112,245)) }
   root.addView(button, LinearLayout.LayoutParams(-1, 120))
-  root.addView(label("СТАТУС ЗАГРУЗКИ", 12f))
+  button.backgroundTintList = ColorStateList.valueOf(Color.rgb(94,92,246))
+  root.addView(label("●  СОСТОЯНИЕ ЗАГРУЗКИ", 12f).apply { setTextColor(Color.rgb(169,184,222)) })
   progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
   root.addView(progress, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
   status = label("Готово к загрузке", 15f)
@@ -97,7 +111,31 @@ class MainActivity : Activity() {
     finally { runOnUiThread { update.isEnabled = true } }
    }
   }
-  root.addView(label("Сохраняйте только материалы, на которые у вас есть права.", 12f))
+  root.addView(label("Сохраняйте только материалы, на которые у вас есть права.", 12f).apply { setTextColor(Color.rgb(150,162,190)) })
+ }
+ private fun popupShape(color: Int, radius: Int, stroke: Int): GradientDrawable =
+  GradientDrawable().apply {
+   setColor(color)
+   cornerRadius = (resources.displayMetrics.density * radius)
+   setStroke((resources.displayMetrics.density * 1.5f).toInt(), stroke)
+  }
+ private fun showQualityPopup() {
+  if (readyLink != url.text.toString().trim() || heights.isEmpty()) {
+   AlertDialog.Builder(this).setTitle("Качество пока недоступно")
+    .setMessage("Вставьте ссылку и дождитесь проверки форматов видео.")
+    .setPositiveButton("Понятно", null).show()
+   return
+  }
+  val options = choices.map { it.first }.toTypedArray()
+  AlertDialog.Builder(this)
+   .setTitle("Выберите качество")
+   .setSingleChoiceItems(options, quality.selectedItemPosition.coerceAtLeast(0)) { dialog, index ->
+    quality.setSelection(index)
+    qualityPicker.text = "⌄  " + options[index]
+    dialog.dismiss()
+   }
+   .setNegativeButton("Отмена", null)
+   .show()
  }
  private fun setChoices(values: List<Int>) {
   heights = values
@@ -110,6 +148,7 @@ class MainActivity : Activity() {
    choices.add("Сначала вставьте ссылку" to null)
   }
   quality.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, choices.map { it.first })
+  if (::qualityPicker.isInitialized) qualityPicker.text = if (values.isEmpty()) "⌄  Ожидание проверки видео" else "⌄  Лучшее доступное качество"
  }
  private fun scheduleCheck() {
   generation++
@@ -149,7 +188,8 @@ class MainActivity : Activity() {
       if (available.isEmpty()) { status.text = "Не удалось определить качество видео"; return@runOnUiThread }
       readyLink = link
       setChoices(available.toList())
-      status.text = "Найдено видео: ${data.optString("title", "Без названия")}. Доступно: ${available.joinToString { "${it}p" }}"
+      status.text = "Найдено: ${data.optString("title", "Без названия")}. Доступно: ${available.joinToString { "${it}p" }}"
+      qualityPicker.animate().scaleX(1.03f).scaleY(1.03f).setDuration(140).withEndAction { qualityPicker.animate().scaleX(1f).scaleY(1f).setDuration(140).start() }.start()
      }
     } catch (e: Exception) {
      runOnUiThread { if (current == generation) status.text = friendlyError(e.message.orEmpty()) }
