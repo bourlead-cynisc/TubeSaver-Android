@@ -11,7 +11,6 @@ import android.view.ViewGroup
 import android.widget.*
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
-import com.yausername.youtubedl_android.ffmpeg.FFmpeg
 import java.io.File
 import kotlin.concurrent.thread
 
@@ -64,7 +63,6 @@ class MainActivity : Activity() {
   thread {
    try {
     YoutubeDL.getInstance().init(applicationContext)
-    FFmpeg.getInstance().init(applicationContext)
     val dir = File(cacheDir, "downloads").apply { mkdirs() }
     dir.listFiles()?.forEach { it.delete() }
     val req = YoutubeDLRequest(link)
