@@ -25,6 +25,7 @@ import android.widget.*
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import java.io.File
+import java.util.Locale
 import kotlin.concurrent.thread
 
 class MainActivity : Activity() {
@@ -222,27 +223,51 @@ class MainActivity : Activity() {
     req.addOption("--retries", "2")
     req.addOption("-P", dir.absolutePath)
     req.addOption("-o", "%(title).100s-%(id)s.%(ext)s")
+    req.addOption("--newline")
+    req.addOption("--progress-template", "download:TSBYTES:%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s")
     if (selected == -1) {
      req.addOption("-x"); req.addOption("--audio-format", "mp3")
     } else {
      val h = selected
-     req.addOption("-f", if (h == null) "bv*+ba/b" else "bv*[height<=${h}]+ba/b[height<=${h}]")
+     val cap = if (h == null) "" else "[height<=${h}]"
+     req.addOption("-f", "bv*[ext=mp4][vcodec^=avc1]${cap}+ba[ext=m4a]/b[ext=mp4]${cap}/bv*${cap}+ba/b${cap}")
      req.addOption("--merge-output-format", "mp4")
+     req.addOption("--recode-video", "mp4")
     }
-    YoutubeDL.getInstance().execute(req, "tube-${System.nanoTime()}") { p, _, _ ->
-     runOnUiThread { progress.progress = p.toInt().coerceIn(0,100); status.text = "Загрузка: ${p.toInt().coerceIn(0,100)}%" }
+    YoutubeDL.getInstance().execute(req, "tube-${System.nanoTime()}") { p, _, line ->
+     val info = transferInfo(line)
+     runOnUiThread {
+      if (p >= 0f) progress.progress = p.toInt().coerceIn(0,100)
+      status.text = if (info != null) "Загрузка: ${p.toInt().coerceIn(0,100)}%\n$info" else if (line.contains("Merger") || line.contains("VideoConvertor")) "Обработка видео..." else "Загрузка: ${p.toInt().coerceIn(0,100)}%"
+     }
     }
-    val result = dir.listFiles()?.filter { it.isFile && !it.name.endsWith(".part") && !it.name.endsWith(".ytdl") }?.maxByOrNull { it.lastModified() }
+    val result = dir.listFiles()?.filter { it.isFile && (if (selected == -1) it.extension.equals("mp3", true) else it.extension.equals("mp4", true)) }?.maxByOrNull { it.lastModified() }
      ?: error("Файл не найден")
-    save(result)
-    result.delete()
-    runOnUiThread { progress.progress = 100; status.text = "Сохранено: ${result.name}" }
+    val clean = if (result.name.endsWith(".webm.mp4", true)) File(result.parentFile, result.name.removeSuffix(".webm.mp4") + ".mp4").also { if (!result.renameTo(it)) error("Не удалось переименовать файл") } else result
+    save(clean)
+    clean.delete()
+    runOnUiThread { progress.progress = 100; status.text = "Сохранено: ${clean.name}" }
    } catch (e: Exception) {
     runOnUiThread { status.text = friendlyError(e.message.orEmpty()) }
    } finally {
     runOnUiThread { button.isEnabled = true }
    }
   }
+ }
+ private fun transferInfo(line: String): String? {
+  val raw = line.substringAfter("TSBYTES:", "")
+  if (raw.isEmpty()) return null
+  val parts = raw.trim().split("|")
+  if (parts.size < 5) return null
+  fun num(s: String) = s.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0 }
+  val done = num(parts[0]) ?: return null
+  val total = num(parts[1]) ?: num(parts[2])
+  val speed = num(parts[3])
+  val eta = num(parts[4])
+  fun mb(v: Double) = String.format(Locale.US, "%.1f МБ", v / 1048576.0)
+  return mb(done) + (total?.let { " из " + mb(it) } ?: " (размер неизвестен)") +
+   (speed?.let { " • " + mb(it) + "/с" } ?: "") +
+   (eta?.let { " • осталось ~" + it.toLong() / 60 + "м " + it.toLong() % 60 + "с" } ?: "")
  }
  private fun isSupportedHost(raw: String?): Boolean {
   val host = raw?.lowercase() ?: return false
