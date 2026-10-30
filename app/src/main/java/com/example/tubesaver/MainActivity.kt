@@ -32,7 +32,7 @@ class MainActivity : Activity() {
    setPadding(36, 64, 36, 40)
    setBackgroundColor(Color.rgb(12,18,32))
   }
-  setContentView(ScrollView(this).apply { addView(root); fillViewport = true; setBackgroundColor(Color.rgb(12,18,32)) })
+  setContentView(ScrollView(this).apply { addView(root); isFillViewport = true; setBackgroundColor(Color.rgb(12,18,32)) })
   window.statusBarColor = Color.rgb(12,18,32)
   window.navigationBarColor = Color.rgb(12,18,32)
   fun label(s: String, size: Float = 16f): TextView = TextView(this).apply {
