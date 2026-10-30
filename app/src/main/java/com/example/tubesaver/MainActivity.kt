@@ -263,7 +263,7 @@ class MainActivity : Activity() {
      req.addOption("--merge-output-format", "mp4")
      req.addOption("--remux-video", "mp4")
     }
-    YoutubeDL.getInstance().execute(req, "tube-${System.nanoTime()}") { p, _, line ->
+    val onProgress: (Float, Long, String) -> Unit = { p, _, line ->
      val info = transferInfo(line)
      runOnUiThread {
       if (info != null) {
@@ -280,6 +280,38 @@ class MainActivity : Activity() {
        val elapsed = (android.os.SystemClock.elapsedRealtime() - startTime) / 1000
        status.text = "Ожидаем ответ сервера и аудиопоток... ${elapsed} с"
       }
+     }
+    }
+    try {
+     YoutubeDL.getInstance().execute(req, "tube-${System.nanoTime()}", onProgress)
+    } catch (first: Exception) {
+     val msg = first.message.orEmpty()
+     val host = android.net.Uri.parse(link).host.orEmpty().lowercase()
+     val youtube = host == "youtu.be" || host == "youtube.com" || host.endsWith(".youtube.com")
+     if (!youtube || !(msg.contains("403") || msg.contains("Sign in", true))) throw first
+     runOnUiThread { progress.isIndeterminate = true; status.text = "YouTube отклонил запрос. Пробуем другой клиент..." }
+     dir.listFiles()?.forEach { it.delete() }
+     val fallback = YoutubeDLRequest(link)
+     fallback.addOption("--no-playlist")
+     fallback.addOption("--socket-timeout", "25")
+     fallback.addOption("--retries", "2")
+     fallback.addOption("--extractor-args", "youtube:player_client=web_safari")
+     fallback.addOption("-P", dir.absolutePath)
+     fallback.addOption("-o", "%(title).100s-%(id)s.%(ext)s")
+     fallback.addOption("--newline")
+     fallback.addOption("--progress-template", "download:TSBYTES:%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s")
+     if (selected == -1) {
+      fallback.addOption("-x")
+      fallback.addOption("--audio-format", "mp3")
+     } else {
+      val cap = if (selected == null) "" else "[height<=${selected}]"
+      fallback.addOption("-f", "b[ext=mp4][acodec!=none]${cap}/b[acodec!=none]${cap}")
+      fallback.addOption("--remux-video", "mp4")
+     }
+     try {
+      YoutubeDL.getInstance().execute(fallback, "tube-fallback-${System.nanoTime()}", onProgress)
+     } catch (second: Exception) {
+      throw IllegalStateException("Основной: ${msg.take(140)}; резервный: ${second.message.orEmpty().take(180)}", second)
      }
     }
     runOnUiThread { status.text = "Проверяем результат и сохраняем файл..." }
@@ -328,9 +360,9 @@ class MainActivity : Activity() {
  }
  private fun friendlyError(message: String): String = when {
   message.contains("No address associated with hostname", true) || message.contains("name resolution", true) -> "Ошибка DNS: сервер недоступен. Проверьте интернет, VPN и DNS. Попробуйте открыть ссылку в браузере."
-  message.contains("403") -> "Сервер отклонил запрос (403). Возможно, требуется авторизация или обновление движка."
+  message.contains("403") -> "Ошибка доступа 403. " + message.takeLast(210)
   message.contains("Unsupported URL", true) -> "Движок пока не поддерживает эту ссылку."
-  message.contains("Sign in", true) -> "Для этого видео нужна авторизация."
+  message.contains("Sign in", true) -> "YouTube запросил авторизацию или проверку клиента. " + message.takeLast(180)
   message.contains("Requested format", true) -> "Нет подходящего видео со звуком. Попробуйте другое качество."
   message.contains("timed out", true) || message.contains("timeout", true) -> "Сервер не ответил вовремя. Повторите попытку."
   message.contains("429") -> "Сервер ограничил запросы (429). Повторите позже."
