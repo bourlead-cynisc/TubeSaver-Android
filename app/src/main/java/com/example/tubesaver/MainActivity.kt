@@ -40,6 +40,8 @@ class MainActivity : Activity() {
  @Volatile private var engineError: String? = null
  private val engineLock = Any()
  private var lastTransfer = ""
+ private var checkedAt = 0L
+ private var checkStartedAt = 0L
  private var pending: Runnable? = null
  private var generation = 0
  private var heights = listOf<Int>()
@@ -178,6 +180,7 @@ class MainActivity : Activity() {
   if (uri.scheme != "https" || !isSupportedHost(uri.host)) { status.text = "Нужна HTTPS-ссылка YouTube, VK Видео или RUTUBE"; return }
   status.text = "Ожидание проверки ссылки..."
   val task = Runnable {
+   checkStartedAt = android.os.SystemClock.elapsedRealtime()
    status.text = "Проверяем доступные форматы..."
    thread {
     try {
@@ -203,6 +206,7 @@ class MainActivity : Activity() {
       if (current != generation) return@runOnUiThread
       if (available.isEmpty()) { status.text = "Не удалось определить качество видео"; return@runOnUiThread }
       readyLink = link
+      checkedAt = android.os.SystemClock.elapsedRealtime()
       setChoices(available.toList())
       status.text = "Найдено: ${data.optString("title", "Без названия")}. Доступно: ${available.joinToString { "${it}p" }}"
       qualityPicker.animate().scaleX(1.03f).scaleY(1.03f).setDuration(140).withEndAction { qualityPicker.animate().scaleX(1f).scaleY(1f).setDuration(140).start() }.start()
@@ -224,7 +228,8 @@ class MainActivity : Activity() {
   if (readyLink != link || choices.isEmpty()) { status.text = "Сначала дождитесь проверки доступного качества"; return }
   val selected = choices.getOrNull(quality.selectedItemPosition)?.second
   button.isEnabled = false
-  status.text = "Подключаемся к источнику видео..."
+  status.text = "Получаем потоки видео и звука..."
+  val startTime = android.os.SystemClock.elapsedRealtime()
   progress.visibility = View.VISIBLE
   progress.isIndeterminate = true
   progress.progress = 0
@@ -238,7 +243,7 @@ class MainActivity : Activity() {
     req.addOption("--no-playlist")
     req.addOption("--no-warnings")
     req.addOption("--socket-timeout", "20")
-    req.addOption("--retries", "2")
+    req.addOption("--retries", "1")
     req.addOption("-P", dir.absolutePath)
     req.addOption("-o", "%(title).100s-%(id)s.%(ext)s")
     req.addOption("--newline")
@@ -248,9 +253,9 @@ class MainActivity : Activity() {
     } else {
      val h = selected
      val cap = if (h == null) "" else "[height<=${h}]"
-     req.addOption("-f", "bv*[ext=mp4][vcodec^=avc1]${cap}+ba[ext=m4a]/b[ext=mp4]${cap}/bv*${cap}+ba/b${cap}")
+     req.addOption("-f", "bv[ext=mp4][vcodec^=avc1]${cap}+ba[ext=m4a]/b[ext=mp4][acodec!=none]${cap}/bv${cap}+ba/b[acodec!=none]${cap}")
      req.addOption("--merge-output-format", "mp4")
-     req.addOption("--recode-video", "mp4")
+     req.addOption("--remux-video", "mp4")
     }
     YoutubeDL.getInstance().execute(req, "tube-${System.nanoTime()}") { p, _, line ->
      val info = transferInfo(line)
@@ -266,10 +271,12 @@ class MainActivity : Activity() {
       } else if (line.contains("Destination:", true) || line.contains("[download]", true)) {
        status.text = if (lastTransfer.isEmpty()) "Соединение установлено, ожидаем данные..." else "Скачивание...\n$lastTransfer"
       } else if (lastTransfer.isEmpty()) {
-       status.text = "Получаем видеопоток от сервера..."
+       val elapsed = (android.os.SystemClock.elapsedRealtime() - startTime) / 1000
+       status.text = "Ожидаем ответ сервера и аудиопоток... ${elapsed} с"
       }
      }
     }
+    runOnUiThread { status.text = "Проверяем результат и сохраняем файл..." }
     val result = dir.listFiles()?.filter { it.isFile && (if (selected == -1) it.extension.equals("mp3", true) else it.extension.equals("mp4", true)) }?.maxByOrNull { it.lastModified() }
      ?: error("Файл не найден")
     val clean = if (result.name.endsWith(".webm.mp4", true)) File(result.parentFile, result.name.removeSuffix(".webm.mp4") + ".mp4").also { if (!result.renameTo(it)) error("Не удалось переименовать файл") } else result
@@ -307,7 +314,8 @@ class MainActivity : Activity() {
   message.contains("403") -> "Нет доступа к видео (403). Возможно, требуется авторизация."
   message.contains("Unsupported URL", true) -> "Движок пока не поддерживает эту ссылку."
   message.contains("Sign in", true) -> "Для этого видео нужна авторизация."
-  else -> "Не удалось скачать видео. Проверьте ссылку и попробуйте обновить движок."
+  message.contains("Requested format", true) -> "Нет подходящего видео со звуком. Попробуйте другое качество."
+  else -> "Не удалось скачать видео: " + message.take(180)
  }
  private fun save(file: File) {
   if (Build.VERSION.SDK_INT < 29) {
