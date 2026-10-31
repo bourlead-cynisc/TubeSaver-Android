@@ -123,7 +123,7 @@ class MainActivity : Activity() {
         setContentView(screen)
 
         val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        val logo = ImageView(this).apply { setImageResource(R.drawable.offtube_icon) }
+        val logo = ImageView(this).apply { setImageResource(R.drawable.offtube_launcher) }
         head.addView(logo, LinearLayout.LayoutParams(dp(44), dp(44)))
         val brand = text("offtube", 29f, Color.WHITE, true).apply { setPadding(dp(10), 0, 0, 0) }
         head.addView(brand)
@@ -416,7 +416,7 @@ class MainActivity : Activity() {
                 } else {
                     val eng = fallback ?: YtDlpFallback(this).also { fallback = it }
                     val estimated = if (audioOnly || analyzedLink != link) null
-                        else if (selectedIndex == 0) slowBestSize else slowSizes[height]
+                        else if (selectedIndex == 0) slowBestSize else height?.let { slowSizes[it] }
                     eng.download(link, height, audioOnly, directory, ::updateProgress, estimated)
                 }
                 updateProgress(-1, "Проверяем видео и звук…")
