@@ -10,8 +10,8 @@ android {
         applicationId = "com.example.tubesaver"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "2.0"
+        versionCode = 3
+        versionName = "2.0.1"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -26,6 +26,5 @@ dependencies {
     // Compatibility fallback for Rutube, VK Video and certain YouTube streams.
     implementation("io.github.junkfood02.youtubedl-android:library:0.18.1")
     implementation("io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1")
-    implementation("io.github.junkfood02.youtubedl-android:aria2c:0.18.1")
     testImplementation("junit:junit:4.13.2")
 }
