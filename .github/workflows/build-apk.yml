@@ -55,4 +55,4 @@ jobs:
               --notes "Android APK (debug build) for testing. YouTube native stream URLs are refreshed on HTTP 403 with consistent client headers. Fallback uses yt-dlp 2026.10.26 and EJS scripts. VK Video and Rutube use yt-dlp directly. Build and unit tests passed in CI; successful downloading on real Android devices has not been verified. Android VPN is needed if the source is blocked by the network. Only download material you have rights to save." \
               --prerelease
           fi
-          gh release upload "$TAG" release/offtube-v2.0-debug.apk --clobber
+          gh release upload "$TAG" release/offtube-v2.0.1-debug.apk --clobber
