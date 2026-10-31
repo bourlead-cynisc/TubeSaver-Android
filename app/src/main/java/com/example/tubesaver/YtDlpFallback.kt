@@ -2,8 +2,8 @@ package com.example.tubesaver
 
 import android.content.Context
 import android.os.SystemClock
-import com.yausername.youtubedl_android.Aria2c
-import com.yausername.youtubedl_android.FFmpeg
+import com.yausername.aria2c.Aria2c
+import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import org.json.JSONObject
