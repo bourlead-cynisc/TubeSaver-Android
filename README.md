@@ -20,3 +20,8 @@ Minimal offline video downloader for YouTube, Rutube, and VK Video.
 - Single non-decreasing transfer progress throughout stream merging and saving.
 - Bytes downloaded, current bandwidth and estimated time remaining when known.
 - Size per quality from available video metadata; unknown or approximate values are labeled explicitly.
+
+## 2.2.0
+- Black/red theme matching the user supplied launcher icon, including quality picker and selected source.
+- Size per quality uses exact filesize first, filesize_approx second, then a marked estimate based on bitrate and duration.
+- Audio/video track sizes are added only for the actual MP4+M4A format selection; missing information remains unknown.

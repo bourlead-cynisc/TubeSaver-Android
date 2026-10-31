@@ -1,0 +1,15 @@
+<resources>
+    <style name="OfftubeTheme" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:colorAccent">#FF2B4F</item>
+        <item name="android:colorControlActivated">#FF2B4F</item>
+        <item name="android:statusBarColor">#08090D</item>
+        <item name="android:navigationBarColor">#08090D</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:alertDialogTheme">@style/OfftubeDialog</item>
+    </style>
+    <style name="OfftubeDialog" parent="android:style/Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">#FF2B4F</item>
+        <item name="android:colorControlActivated">#FF2B4F</item>
+        <item name="android:windowBackground">#171921</item>
+    </style>
+</resources>

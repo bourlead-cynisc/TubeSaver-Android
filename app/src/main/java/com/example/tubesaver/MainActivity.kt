@@ -29,11 +29,11 @@ import java.io.File
 import kotlin.concurrent.thread
 
 class MainActivity : Activity() {
-    private val dark = Color.rgb(11, 15, 23)
-    private val surface = Color.rgb(24, 30, 42)
-    private val outline = Color.rgb(44, 52, 67)
-    private val muted = Color.rgb(163, 175, 191)
-    private val accent = Color.rgb(189, 246, 102)
+    private val dark = Color.rgb(8, 9, 13)
+    private val surface = Color.rgb(23, 25, 33)
+    private val outline = Color.rgb(47, 49, 61)
+    private val muted = Color.rgb(169, 174, 187)
+    private val accent = Color.rgb(255, 43, 79)
     private lateinit var linkInput: EditText
     private lateinit var status: TextView
     private lateinit var title: TextView
@@ -58,6 +58,7 @@ class MainActivity : Activity() {
     private var lastAudio = false
     private var fastEngine: FastYoutubeEngine? = null
     private var fallback: YtDlpFallback? = null
+    private val sourceChips = mutableListOf<Pair<String, TextView>>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -107,7 +108,7 @@ class MainActivity : Activity() {
         textSize = 14f
         isAllCaps = false
         setTypeface(Typeface.DEFAULT, Typeface.BOLD)
-        setTextColor(if (filled) dark else Color.WHITE)
+        setTextColor(Color.WHITE)
         background = bg(if (filled) accent else surface, 18, if (filled) null else outline)
         minHeight = dp(56)
     }
@@ -141,6 +142,7 @@ class MainActivity : Activity() {
                 setPadding(dp(10), dp(9), dp(10), dp(9))
                 background = bg(surface, 12, outline)
             }
+            sourceChips.add(source to chip)
             val params = LinearLayout.LayoutParams(0, dp(35), 1f).apply { rightMargin = dp(if (source == "VK Видео") 0 else 7) }
             sourceRow.addView(chip, params)
         }
@@ -158,7 +160,7 @@ class MainActivity : Activity() {
             setSingleLine(true)
             textSize = 15f
             setTextColor(Color.WHITE)
-            setHintTextColor(Color.rgb(111, 126, 144))
+            setHintTextColor(muted)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
             setPadding(dp(14), dp(12), dp(14), dp(12))
             background = bg(dark, 13, outline)
@@ -246,6 +248,18 @@ class MainActivity : Activity() {
 
     private fun invalidateSelection() {
         if (!::linkInput.isInitialized) return
+        val selectedSource = when (SourceHosts.detect(linkInput.text.toString().trim())) {
+            SourceHosts.Platform.YOUTUBE -> "YouTube"
+            SourceHosts.Platform.RUTUBE -> "RUTUBE"
+            SourceHosts.Platform.VK -> "VK Видео"
+            else -> null
+        }
+        for ((name, chip) in sourceChips) {
+            val active = name == selectedSource
+            chip.setTextColor(if (active) accent else muted)
+            chip.background = bg(if (active) Color.rgb(47, 22, 34) else surface, 12,
+                if (active) accent else outline)
+        }
         if (linkInput.text.toString().trim() == analyzedLink) return
         analyzedLink = ""
         selectedIndex = 0
@@ -277,7 +291,13 @@ class MainActivity : Activity() {
                 selectedIndex = index
                 quality.text = "⌄  ${labels[index]}"
                 d.dismiss()
-            }.setNegativeButton("Отмена", null).show()
+            }.setNegativeButton("Отмена", null)
+            .create().also { dialog ->
+                dialog.setOnShowListener {
+                    dialog.window?.setBackgroundDrawable(bg(surface, 18, outline))
+                }
+                dialog.show()
+            }
     }
 
     private fun validLink(): Pair<String, SourceHosts.Platform>? {

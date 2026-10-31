@@ -49,41 +49,33 @@ class YtDlpFallback(private val context: Context) {
         val jsonIndex = output.indexOf('{')
         if (jsonIndex < 0) throw IOException("Не удалось получить информацию о видео")
         val json = JSONObject(output.substring(jsonIndex))
-        val heights = sortedSetOf<Int>(compareByDescending { it })
         val formats = json.optJSONArray("formats")
-        if (formats != null) for (i in 0 until formats.length()) {
-            val f = formats.optJSONObject(i) ?: continue
-            if (f.optInt("height") > 0 && f.optString("vcodec", "none") != "none") heights.add(f.optInt("height"))
+        val entries = (0 until (formats?.length() ?: 0)).mapNotNull { index ->
+            val format = formats?.optJSONObject(index) ?: return@mapNotNull null
+            val video = format.optString("vcodec", "none") != "none"
+            val audio = format.optString("acodec", "none") != "none"
+            val kbps = if (audio && !video) format.optDouble("abr", 0.0) else
+                format.optDouble("tbr", format.optDouble("vbr", 0.0))
+            SizeEstimator.Format(
+                height = format.optInt("height", 0),
+                ext = format.optString("ext", ""),
+                hasVideo = video, hasAudio = audio,
+                bitrateKbps = kbps.takeIf { it.isFinite() && it > 0 },
+                exactBytes = format.optLong("filesize", -1L).takeIf { it > 0 },
+                approximateBytes = format.optLong("filesize_approx", -1L).takeIf { it > 0 }
+            )
         }
-        if (heights.isEmpty() && json.optInt("height") > 0) heights.add(json.optInt("height"))
-        fun sizeOf(f: JSONObject): FormatSize? {
-            val exact = f.optLong("filesize", -1L)
-            if (exact > 0) return FormatSize(exact, false)
-            val approx = f.optLong("filesize_approx", -1L)
-            return if (approx > 0) FormatSize(approx, true) else null
-        }
-        val allFormats = (0 until (formats?.length() ?: 0)).mapNotNull { formats?.optJSONObject(it) }
-        val audio = allFormats.filter { it.optString("vcodec") == "none" &&
-            it.optString("acodec", "none") != "none" && it.optString("ext") == "m4a" }
-            .maxByOrNull { it.optDouble("abr", 0.0) }
-        val audioSize = audio?.let(::sizeOf)
-        val sizes = mutableMapOf<Int, FormatSize>()
-        for (height in heights) {
-            val available = allFormats.filter { it.optInt("height") == height &&
-                it.optString("vcodec", "none") != "none" && it.optString("ext") == "mp4" }
-            val separate = available.filter { it.optString("acodec", "none") == "none" }
-                .maxByOrNull { it.optDouble("tbr", 0.0) }
-            val combined = available.filter { it.optString("acodec", "none") != "none" }
-                .maxByOrNull { it.optDouble("tbr", 0.0) }
-            val pair = separate?.let(::sizeOf)
-            val whole = combined?.let(::sizeOf)
-            val totalSize = if (pair != null && audioSize != null)
-                FormatSize(pair.bytes + audioSize.bytes, pair.approximate || audioSize.approximate)
-            else whole
-            if (totalSize != null) sizes[height] = totalSize
-        }
-        val firstSize = heights.firstOrNull()?.let { sizes[it] }
-        return Info(json.optString("title", "Видео"), heights.toList(), sizes, firstSize)
+        val duration = json.optDouble("duration", 0.0).takeIf { it.isFinite() && it > 0 }
+        val heights = entries.filter { it.hasVideo && it.ext == "mp4" && it.height > 0 }
+            .map { it.height }.distinct().sortedDescending()
+        val best = SizeEstimator.select(entries, duration, null)
+        val sizes = heights.mapNotNull { height ->
+            SizeEstimator.select(entries, duration, height)?.let { size ->
+                height to FormatSize(size.bytes, size.approximate)
+            }
+        }.toMap()
+        return Info(json.optString("title", "Видео"), heights, sizes,
+            best?.let { FormatSize(it.bytes, it.approximate) })
     }
 
     fun cancel() {

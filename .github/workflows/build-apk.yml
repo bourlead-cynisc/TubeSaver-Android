@@ -38,21 +38,21 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 14
       - name: Publish ready APK to GitHub Releases
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/feature/offtube-fast-native'
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="v2.1.0"
+          TAG="v2.2.0"
           APK="app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
           mkdir -p release
-          cp "$APK" release/offtube-2.1.0.apk
+          cp "$APK" release/offtube-2.2.0.apk
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" \
               --target "$GITHUB_SHA" \
-              --title "offtube 2.1.0 — новый дизайн и мониторинг загрузки" \
-              --notes "Offtube 2.1.0: новая иконка, монолитный прогресс без повторных циклов, скорость скачивания, объём, ETA, размеры доступных качеств, yt-dlp 2026.10.26. Android APK debug. Скачивайте только материалы, на которые у вас есть права." \
+              --title "offtube 2.2.0 — красная тема и расчёт размера" \
+              --notes "Offtube 2.2.0: чёрно-красная тема, размеры MP4 по filesize и приблизительный расчёт по битрейту и длительности. Android APK debug. Загружайте материалы, на которые у вас есть права." \
               --latest
           fi
-          gh release upload "$TAG" release/offtube-2.1.0.apk --clobber
+          gh release upload "$TAG" release/offtube-2.2.0.apk --clobber
