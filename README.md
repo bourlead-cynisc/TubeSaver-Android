@@ -3,14 +3,14 @@
 Minimal offline video downloader for YouTube, Rutube, and VK Video.
 
 **Engines**
-- YouTube: NewPipeExtractor v0.26.5 for stream lookup; native Android HTTP downloads, video/audio in parallel, MediaMuxer to combine AAC and MP4 without re-encoding.
-- Rutube / VK Video: yt-dlp with optional aria2c for faster HTTP downloads and FFmpeg for merging audio/video. If aria2c fails, the built-in downloader is retried.
-- If NewPipe cannot extract a YouTube link, yt-dlp is tried as a fallback.
+- YouTube: NewPipeExtractor v0.26.5 for stream lookup; native Android parallel HTTP downloads and MediaMuxer for AAC+MP4. Short-lived stream URLs are refreshed after 30 seconds and on HTTP 403, and media transfers use the same user agent as extraction.
+- Rutube / VK Video: yt-dlp's built-in downloader with concurrent fragment downloads and FFmpeg for merging audio/video (no slow aria2c fallback cycle).
+- If NewPipe cannot extract or download a YouTube link, yt-dlp is tried as a fallback with official EJS JavaScript challenge scripts enabled via `--remote-components ejs:github`.
 
-**Build:** Open in Android Studio with JDK 17 / Android SDK 35, or run `gradle :app:assembleDebug`. APK appears in `app/build/outputs/apk/debug/`. GitHub Actions uploads the APK as an artifact if the build succeeds.
+**Build:** GitHub Actions downloads the official yt-dlp `2026.10.26` zipapp from the project's GitHub release and validates SHA256 before compiling; it overrides the fallback library's packaged older executable. A manual local Gradle build will not automatically perform that step: download the verified zipapp into `app/src/main/res/raw/ytdlp` before building. Build with JDK 17 / Android SDK 35 using `gradle :app:assembleDebug`. GitHub Actions publishes a prerelease APK to GitHub Releases upon successful build.
 
 **Use:** paste a video URL, optionally tap “Найти видео” to select quality, then tap “Скачать”. Videos are saved to `Download/OffTube` on Android 10+; older Android devices use the app-specific external downloads directory. Android VPN connectivity must already work for the source service. DRM, private videos and authentication-gated streams are not supported.
 
-**Limitations:** This project has not been verified on physical devices or real streams. Remote services can change their extraction APIs at any time. Audio-only YouTube uses M4A in fast mode; MP3 is available in fallback mode. Download only content you have the right to save.
+**Limitations:** Compilation and unit tests via GitHub Actions do not confirm that YouTube streams download through a particular Android VPN. This project has not been verified on physical devices or real streams. Remote services can change their extraction APIs at any time. Audio-only YouTube uses M4A in fast mode; MP3 is available in fallback mode. Download only content you have the right to save.
 
 **Licensing:** The source integrates [NewPipeExtractor](https://github.com/TeamNewPipe/NewPipeExtractor) (GPL-3.0-or-later) and [youtubedl-android](https://github.com/yausername/youtubedl-android) (GPL-3.0). Distribution must satisfy the applicable GPL conditions, including corresponding source availability and attribution.
