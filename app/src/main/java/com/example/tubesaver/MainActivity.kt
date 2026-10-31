@@ -378,13 +378,19 @@ class MainActivity : Activity() {
                     val eng = fastEngine ?: FastYoutubeEngine().also { fastEngine = it }
                     audioOnly = option.audioOnly
                     try {
-                        eng.download(option, directory, ::updateProgress)
+                        eng.download(link, option, directory, ::updateProgress)
                     } catch (nativeError: Exception) {
                         if (nativeError.message.orEmpty().contains("отмен", true)) throw nativeError
                         updateProgress(-1, "Переключаемся на резервный способ…")
                         directory.listFiles()?.forEach { it.delete() }
                         val slow = fallback ?: YtDlpFallback(this).also { fallback = it }
-                        slow.download(link, option.height.takeIf { it > 0 }, audioOnly, directory, ::updateProgress)
+                        try {
+                            slow.download(link, option.height.takeIf { it > 0 }, audioOnly, directory, ::updateProgress)
+                        } catch (fallbackError: Exception) {
+                            val first = nativeError.message.orEmpty().take(120)
+                            val second = fallbackError.message.orEmpty().take(160)
+                            throw java.io.IOException("Быстрый способ: $first. Резервный: $second", fallbackError)
+                        }
                     }
                 } else {
                     val eng = fallback ?: YtDlpFallback(this).also { fallback = it }
@@ -427,7 +433,7 @@ class MainActivity : Activity() {
     private fun explain(e: Exception): String {
         val message = (e.cause?.message ?: e.message ?: "Неизвестная ошибка").take(200)
         return when {
-            message.contains("403") -> "HTTP 403: сервер отказал в доступе. Проверьте VPN или повторите позже."
+            message.contains("403") -> "HTTP 403: сервер отклонил поток. Ссылку повторно проверили; возможны ограничения YouTube, VPN или отсутствие токена доступа. Попробуйте другое видео либо качество."
             message.contains("timed out", true) -> "Сервер не ответил вовремя. Проверьте VPN и интернет."
             message.contains("Unable to resolve host", true) || message.contains("name resolution", true) -> "Ошибка DNS. Проверьте VPN и подключение."
             message.contains("отмен", true) -> "Загрузка отменена"
