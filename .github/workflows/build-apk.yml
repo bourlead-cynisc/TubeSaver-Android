@@ -6,7 +6,7 @@ on:
     branches: [main]
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -29,3 +29,22 @@ jobs:
           name: offtube-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 14
+      - name: Publish ready APK to GitHub Releases
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/feature/offtube-fast-native'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="v2.0.0-beta.1"
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          mkdir -p release
+          cp "$APK" release/offtube-v2.0-debug.apk
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --target "$GITHUB_SHA" \
+              --title "offtube 2.0 Beta — Android APK" \
+              --notes "Android APK (debug build) for testing. YouTube uses NewPipeExtractor with native streaming; VK Video and Rutube use yt-dlp fallback. Downloads from real sources have not been verified on physical Android devices. Android VPN is needed if the source is blocked by the network. Only download material you have rights to save." \
+              --prerelease
+          fi
+          gh release upload "$TAG" release/offtube-v2.0-debug.apk --clobber
