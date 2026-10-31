@@ -28,6 +28,8 @@ class FastYoutubeEngine {
                       val audioUrl: String?, val mux: Boolean, val audioOnly: Boolean = false)
     data class Video(val title: String, val choices: List<Choice>)
     @Volatile private var cancelled = false
+    @Volatile private var inspectedAt = 0L
+    @Volatile private var inspectedLink = ""
 
     companion object {
         private val initLock = Any()
@@ -96,13 +98,35 @@ class FastYoutubeEngine {
         }
         if (audio != null) choices.add(Choice("Только аудио · M4A", 0, null, audio.content, false, true))
         if (choices.isEmpty()) throw IOException("Нет совместимых MP4/M4A потоков. Попробуйте резервный способ.")
+        inspectedAt = SystemClock.elapsedRealtime()
+        inspectedLink = url
         return Video(info.name.ifBlank { "Видео" }, choices)
     }
 
     fun cancel() { cancelled = true }
 
-    fun download(choice: Choice, folder: File, progress: (Int, String) -> Unit): File {
+    fun download(link: String, choice: Choice, folder: File, progress: (Int, String) -> Unit): File {
         cancelled = false
+        // Extracted Googlevideo addresses are short-lived; use fresh URLs when needed.
+        val initial = if (inspectedLink != link || SystemClock.elapsedRealtime() - inspectedAt > 30_000L) {
+            progress(-1, "Обновляем адреса потоков…")
+            matchingChoice(inspect(link).choices, choice)
+        } else choice
+        try {
+            return downloadStreams(initial, folder, progress)
+        } catch (error: Exception) {
+            if (cancelled || !error.message.orEmpty().contains("403")) throw error
+            progress(-1, "Ссылка на поток отклонена (403). Запрашиваем новую…")
+            val refreshed = matchingChoice(inspect(link).choices, choice)
+            return downloadStreams(refreshed, folder, progress)
+        }
+    }
+
+    private fun matchingChoice(choices: List<Choice>, requested: Choice): Choice =
+        choices.firstOrNull { it.height == requested.height && it.audioOnly == requested.audioOnly }
+            ?: throw IOException("Выбранное качество больше недоступно; выберите другое")
+
+    private fun downloadStreams(choice: Choice, folder: File, progress: (Int, String) -> Unit): File {
         folder.mkdirs()
         val videoFile = File(folder, "stream-video.mp4")
         val audioFile = File(folder, "stream-audio.m4a")
@@ -160,7 +184,8 @@ class FastYoutubeEngine {
             val conn = URL(url).openConnection() as HttpURLConnection
             conn.connectTimeout = 15000
             conn.readTimeout = 25000
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/130.0 Mobile Safari/537.36")
+            // Keep the same client identity as in extractor requests to avoid inconsistent signatures.
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android 15; Mobile; rv:128.0) Gecko/128.0 Firefox/128.0")
             if (existing > 0) conn.setRequestProperty("Range", "bytes=$existing-")
             try {
                 val code = conn.responseCode
