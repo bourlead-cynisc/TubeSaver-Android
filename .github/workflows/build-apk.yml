@@ -19,6 +19,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+      - name: Bundle verified current yt-dlp for all Android builds
+        run: |
+          set -euo pipefail
+          mkdir -p app/src/main/res/raw
+          curl -fL --retry 3 --connect-timeout 15 --max-time 120 \
+            -o app/src/main/res/raw/ytdlp \
+            https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp
+          echo "e51e69e89489f199530f13d32a4342da3ddb2cf34842f364603a066db05afbf3  app/src/main/res/raw/ytdlp" | sha256sum -c -
       - name: Unit tests
         run: gradle --no-daemon :app:testDebugUnitTest
       - name: Build APK
@@ -35,16 +43,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="v2.0.0-beta.1"
+          TAG="v2.0.1-beta.2"
           APK="app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
           mkdir -p release
-          cp "$APK" release/offtube-v2.0-debug.apk
+          cp "$APK" release/offtube-v2.0.1-debug.apk
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" \
               --target "$GITHUB_SHA" \
-              --title "offtube 2.0 Beta — Android APK" \
-              --notes "Android APK (debug build) for testing. YouTube uses NewPipeExtractor with native streaming; VK Video and Rutube use yt-dlp fallback. Downloads from real sources have not been verified on physical Android devices. Android VPN is needed if the source is blocked by the network. Only download material you have rights to save." \
+              --title "offtube 2.0.1 Beta — YouTube 403 fixes" \
+              --notes "Android APK (debug build) for testing. YouTube native stream URLs are refreshed on HTTP 403 with consistent client headers. Fallback uses yt-dlp 2026.10.26 and EJS scripts. VK Video and Rutube use yt-dlp directly. Build and unit tests passed in CI; successful downloading on real Android devices has not been verified. Android VPN is needed if the source is blocked by the network. Only download material you have rights to save." \
               --prerelease
           fi
           gh release upload "$TAG" release/offtube-v2.0-debug.apk --clobber
