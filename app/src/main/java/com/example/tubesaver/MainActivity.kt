@@ -50,6 +50,9 @@ class MainActivity : Activity() {
     private var selectedTitle = "Видео"
     private var quickChoices = emptyList<FastYoutubeEngine.Choice>()
     private var slowHeights = emptyList<Int>()
+    private var slowSizes = emptyMap<Int, YtDlpFallback.FormatSize>()
+    private var slowBestSize: YtDlpFallback.FormatSize? = null
+    private var displayedPercent = -1
     private var quick = false
     private var lastUri: Uri? = null
     private var lastAudio = false
@@ -250,13 +253,22 @@ class MainActivity : Activity() {
         selectedTitle = "Видео"
         quickChoices = emptyList()
         slowHeights = emptyList()
+        slowSizes = emptyMap()
+        slowBestSize = null
         if (::quality.isInitialized) quality.text = "⌄  Лучшее доступное · MP4 со звуком"
     }
+
+    private fun sizeLabel(size: YtDlpFallback.FormatSize?): String =
+        if (size == null) " · размер неизвестен"
+        else " · " + (if (size.approximate) "≈ " else "") +
+            String.format(java.util.Locale.US, "%.1f МБ", size.bytes / 1048576.0)
 
     private fun showChoices() {
         val labels = when {
             quick -> quickChoices.map { it.label }
-            slowHeights.isNotEmpty() -> listOf("Лучшее доступное · MP4 + звук") + slowHeights.map { "${it}p · MP4 + звук" } + "Только аудио · MP3"
+            slowHeights.isNotEmpty() -> listOf("Лучшее доступное · MP4 + звук" + sizeLabel(slowBestSize)) +
+                slowHeights.map { "${it}p · MP4 + звук" + sizeLabel(slowSizes[it]) } +
+                "Только аудио · MP3 · размер неизвестен"
             else -> listOf("Лучшее доступное · MP4 + звук", "Только аудио · MP3")
         }
         AlertDialog.Builder(this)
@@ -291,8 +303,14 @@ class MainActivity : Activity() {
     private fun updateProgress(percent: Int, message: String) {
         runOnUiThread {
             progressBar.visibility = View.VISIBLE
-            progressBar.isIndeterminate = percent < 0
-            if (percent >= 0) progressBar.progress = percent
+            if (percent >= 0) {
+                displayedPercent = maxOf(displayedPercent, percent.coerceIn(0, 99))
+                progressBar.isIndeterminate = false
+                progressBar.progress = displayedPercent
+            } else if (displayedPercent < 0) {
+                progressBar.isIndeterminate = true
+            }
+            // During merging or saving, keep the existing progress instead of starting again.
             status.text = message
         }
     }
@@ -325,9 +343,11 @@ class MainActivity : Activity() {
                     quick = fastResult != null
                     quickChoices = fastResult?.choices ?: emptyList()
                     slowHeights = slowResult?.heights ?: emptyList()
+                    slowSizes = slowResult?.sizes ?: emptyMap()
+                    slowBestSize = slowResult?.bestSize
                     selectedTitle = fastResult?.title ?: slowResult?.title ?: "Видео"
                     title.text = selectedTitle
-                    quality.text = if (quickChoices.isNotEmpty()) "⌄  ${quickChoices[0].label}" else "⌄  Лучшее доступное · MP4 со звуком"
+                    quality.text = if (quickChoices.isNotEmpty()) "⌄  ${quickChoices[0].label}" else "⌄  Лучшее доступное · MP4 со звуком" + sizeLabel(slowBestSize)
                     status.text = if (quick) "Быстрый движок готов · ${quickChoices.size} форматов" else "Форматы получены · резервный движок"
                     setBusy(false)
                 }
@@ -340,6 +360,7 @@ class MainActivity : Activity() {
     private fun startDownload() {
         if (busy) return
         val (link, platform) = validLink() ?: return
+        displayedPercent = -1
         setBusy(true, downloading = true)
         title.text = if (analyzedLink == link) selectedTitle else "Подключаемся к сервису…"
         updateProgress(-1, "Готовим загрузку…")
@@ -394,7 +415,9 @@ class MainActivity : Activity() {
                     }
                 } else {
                     val eng = fallback ?: YtDlpFallback(this).also { fallback = it }
-                    eng.download(link, height, audioOnly, directory, ::updateProgress)
+                    val estimated = if (audioOnly || analyzedLink != link) null
+                        else if (selectedIndex == 0) slowBestSize else slowSizes[height]
+                    eng.download(link, height, audioOnly, directory, ::updateProgress, estimated)
                 }
                 updateProgress(-1, "Проверяем видео и звук…")
                 SaveMedia.verify(result, audioOnly)

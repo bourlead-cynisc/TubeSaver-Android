@@ -5,6 +5,8 @@ import android.media.MediaExtractor
 import android.media.MediaFormat as AndroidMediaFormat
 import android.media.MediaMuxer
 import android.os.SystemClock
+import android.net.Uri
+import java.util.Locale
 import org.schabi.newpipe.extractor.MediaFormat
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.downloader.Downloader
@@ -25,7 +27,7 @@ import java.util.concurrent.atomic.AtomicLong
 /** YouTube: NewPipe extraction, native HTTP download, lossless Android MP4 muxing. */
 class FastYoutubeEngine {
     data class Choice(val label: String, val height: Int, val videoUrl: String?,
-                      val audioUrl: String?, val mux: Boolean, val audioOnly: Boolean = false)
+                      val audioUrl: String?, val mux: Boolean, val audioOnly: Boolean = false, val sizeBytes: Long? = null)
     data class Video(val title: String, val choices: List<Choice>)
     @Volatile private var cancelled = false
     @Volatile private var inspectedAt = 0L
@@ -73,6 +75,13 @@ class FastYoutubeEngine {
             Regex("""(\d{3,4})p""").find(resolution.orEmpty())?.groupValues?.get(1)?.toIntOrNull() ?: 0
     }
 
+    private fun contentSize(link: String?): Long? = try {
+        link?.let { Uri.parse(it).getQueryParameter("clen")?.toLongOrNull()?.takeIf { n -> n > 0 } }
+    } catch (_: Exception) { null }
+
+    private fun displayBytes(bytes: Long): String =
+        String.format(Locale.US, "%.1f МБ", bytes.toDouble() / 1048576.0)
+
     fun inspect(url: String): Video {
         initialize()
         val info = StreamInfo.getInfo(url)
@@ -91,12 +100,19 @@ class FastYoutubeEngine {
             val progressive = available.firstOrNull { !it.isVideoOnly }
             val separate = available.firstOrNull { it.isVideoOnly }
             if (separate != null && audio != null) {
-                choices.add(Choice("${size}p · MP4 + звук", size, separate.content, audio.content, true))
+                val vs = contentSize(separate.content)
+                val asize = contentSize(audio.content)
+                val bytes = if (vs != null && asize != null) vs + asize else null
+                choices.add(Choice("${size}p · MP4 + звук" + (bytes?.let { " · ${displayBytes(it)}" } ?: " · размер неизвестен"),
+                    size, separate.content, audio.content, true, false, bytes))
             } else if (progressive != null) {
-                choices.add(Choice("${size}p · MP4 + звук", size, progressive.content, null, false))
+                val bytes = contentSize(progressive.content)
+                choices.add(Choice("${size}p · MP4 + звук" + (bytes?.let { " · ${displayBytes(it)}" } ?: " · размер неизвестен"),
+                    size, progressive.content, null, false, false, bytes))
             }
         }
-        if (audio != null) choices.add(Choice("Только аудио · M4A", 0, null, audio.content, false, true))
+        if (audio != null) choices.add(Choice("Только аудио · M4A" + (contentSize(audio.content)?.let { " · ${displayBytes(it)}" } ?: " · размер неизвестен"),
+            0, null, audio.content, false, true, contentSize(audio.content)))
         if (choices.isEmpty()) throw IOException("Нет совместимых MP4/M4A потоков. Попробуйте резервный способ.")
         inspectedAt = SystemClock.elapsedRealtime()
         inspectedLink = url
@@ -137,6 +153,8 @@ class FastYoutubeEngine {
         val videoTotal = AtomicLong(-1)
         val audioTotal = AtomicLong(-1)
         val updatedAt = AtomicLong(0)
+        val sampledAt = AtomicLong(SystemClock.elapsedRealtime())
+        val sampledBytes = AtomicLong(0)
         val report: () -> Unit = {
             val now = SystemClock.elapsedRealtime()
             val last = updatedAt.get()
@@ -146,7 +164,14 @@ class FastYoutubeEngine {
                 val at = if (choice.audioUrl == null) 0L else audioTotal.get()
                 val total = if (vt >= 0 && at >= 0) vt + at else 0
                 val percent = if (total > 0) (completed * 100 / total).toInt().coerceIn(0, 99) else -1
-                progress(percent, "Загружено ${completed / 1048576} МБ")
+                val elapsed = (now - sampledAt.get()).coerceAtLeast(1L)
+                val rate = (completed - sampledBytes.get()).coerceAtLeast(0L) * 1000L / elapsed
+                sampledAt.set(now)
+                sampledBytes.set(completed)
+                val speedLabel = if (rate > 0L) " · ${displayBytes(rate)}/с" else ""
+                val eta = if (total > completed && rate > 0L) " · ≈ ${(total - completed) / rate} с" else ""
+                val volume = displayBytes(completed) + (if (total > 0) " из ${displayBytes(total)}" else "")
+                progress(percent, "Загружено $volume$speedLabel$eta")
             }
         }
         val pool = Executors.newFixedThreadPool(2)

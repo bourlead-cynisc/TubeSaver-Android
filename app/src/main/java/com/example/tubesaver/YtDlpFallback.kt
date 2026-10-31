@@ -11,7 +11,9 @@ import java.io.IOException
 
 /** Fallback for VK Video, Rutube and YouTube when a direct stream is not available. */
 class YtDlpFallback(private val context: Context) {
-    data class Info(val title: String, val heights: List<Int>)
+    data class FormatSize(val bytes: Long, val approximate: Boolean)
+    data class Info(val title: String, val heights: List<Int>,
+                    val sizes: Map<Int, FormatSize>, val bestSize: FormatSize?)
     private val processId = "offtube-${System.nanoTime()}"
     @Volatile private var cancelled = false
 
@@ -54,7 +56,34 @@ class YtDlpFallback(private val context: Context) {
             if (f.optInt("height") > 0 && f.optString("vcodec", "none") != "none") heights.add(f.optInt("height"))
         }
         if (heights.isEmpty() && json.optInt("height") > 0) heights.add(json.optInt("height"))
-        return Info(json.optString("title", "Видео"), heights.toList())
+        fun sizeOf(f: JSONObject): FormatSize? {
+            val exact = f.optLong("filesize", -1L)
+            if (exact > 0) return FormatSize(exact, false)
+            val approx = f.optLong("filesize_approx", -1L)
+            return if (approx > 0) FormatSize(approx, true) else null
+        }
+        val allFormats = (0 until (formats?.length() ?: 0)).mapNotNull { formats?.optJSONObject(it) }
+        val audio = allFormats.filter { it.optString("vcodec") == "none" &&
+            it.optString("acodec", "none") != "none" && it.optString("ext") == "m4a" }
+            .maxByOrNull { it.optDouble("abr", 0.0) }
+        val audioSize = audio?.let(::sizeOf)
+        val sizes = mutableMapOf<Int, FormatSize>()
+        for (height in heights) {
+            val available = allFormats.filter { it.optInt("height") == height &&
+                it.optString("vcodec", "none") != "none" && it.optString("ext") == "mp4" }
+            val separate = available.filter { it.optString("acodec", "none") == "none" }
+                .maxByOrNull { it.optDouble("tbr", 0.0) }
+            val combined = available.filter { it.optString("acodec", "none") != "none" }
+                .maxByOrNull { it.optDouble("tbr", 0.0) }
+            val pair = separate?.let(::sizeOf)
+            val whole = combined?.let(::sizeOf)
+            val totalSize = if (pair != null && audioSize != null)
+                FormatSize(pair.bytes + audioSize.bytes, pair.approximate || audioSize.approximate)
+            else whole
+            if (totalSize != null) sizes[height] = totalSize
+        }
+        val firstSize = heights.firstOrNull()?.let { sizes[it] }
+        return Info(json.optString("title", "Видео"), heights.toList(), sizes, firstSize)
     }
 
     fun cancel() {
@@ -62,7 +91,8 @@ class YtDlpFallback(private val context: Context) {
         try { YoutubeDL.getInstance().destroyProcessById(processId) } catch (_: Exception) {}
     }
 
-    fun download(link: String, maxHeight: Int?, audioOnly: Boolean, dir: File, progress: (Int, String) -> Unit): File {
+    fun download(link: String, maxHeight: Int?, audioOnly: Boolean, dir: File,
+                 progress: (Int, String) -> Unit, expected: FormatSize? = null): File {
         cancelled = false
         init()
         dir.mkdirs()
@@ -76,6 +106,7 @@ class YtDlpFallback(private val context: Context) {
             addOption("--no-playlist")
             addOption("--no-warnings")
             addOption("--newline")
+            addOption("--progress-template", "download:OFFTUBE_DATA:%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s")
             addOption("--socket-timeout", "20")
             addOption("--retries", "2")
             addOption("--fragment-retries", "3")
@@ -93,13 +124,17 @@ class YtDlpFallback(private val context: Context) {
                 addOption("--merge-output-format", "mp4")
             }
         }
-        var updated = 0L
+        val meter = TransferProgress(expected?.bytes,
+            expected?.approximate == true,
+            if (SourceHosts.detect(link) == SourceHosts.Platform.YOUTUBE && !audioOnly) 2 else 1)
         val callback: (Float, Long, String) -> Unit = { pct, _, line ->
-            val now = SystemClock.elapsedRealtime()
-            if (now - updated > 180) {
-                updated = now
-                val n = pct.toInt().coerceIn(0, 99)
-                progress(if (pct > 0f) n else -1, if (line.contains("Merger", true) || line.contains("ExtractAudio", true)) "Обрабатываем файл…" else "Загрузка $n%")
+            if (line.contains("OFFTUBE_DATA:")) {
+                meter.read(line)?.let { snapshot -> progress(snapshot.percent, snapshot.message) }
+            } else if (line.contains("Merger", true) || line.contains("ExtractAudio", true)
+                    || line.contains("Fixup", true)) {
+                progress(-1, "Объединяем видео и звук…")
+            } else if (line.contains("[download] Destination", true)) {
+                progress(-1, "Начинаем передачу данных…")
             }
         }
         try {

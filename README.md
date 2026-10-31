@@ -14,3 +14,9 @@ Minimal offline video downloader for YouTube, Rutube, and VK Video.
 **Limitations:** Compilation and unit tests via GitHub Actions do not confirm that YouTube streams download through a particular Android VPN. This project has not been verified on physical devices or real streams. Remote services can change their extraction APIs at any time. Audio-only YouTube uses M4A in fast mode; MP3 is available in fallback mode. Download only content you have the right to save.
 
 **Licensing:** The source integrates [NewPipeExtractor](https://github.com/TeamNewPipe/NewPipeExtractor) (GPL-3.0-or-later) and [youtubedl-android](https://github.com/yausername/youtubedl-android) (GPL-3.0). Distribution must satisfy the applicable GPL conditions, including corresponding source availability and attribution.
+
+## 2.1.0
+- Launcher artwork supplied by the user; image also displayed in the header.
+- Single non-decreasing transfer progress throughout stream merging and saving.
+- Bytes downloaded, current bandwidth and estimated time remaining when known.
+- Size per quality from available video metadata; unknown or approximate values are labeled explicitly.

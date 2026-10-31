@@ -43,16 +43,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="v2.0.1-beta.2"
+          TAG="v2.1.0"
           APK="app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
           mkdir -p release
-          cp "$APK" release/offtube-v2.0.1-debug.apk
+          cp "$APK" release/offtube-2.1.0.apk
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" \
               --target "$GITHUB_SHA" \
-              --title "offtube 2.0.1 Beta — YouTube 403 fixes" \
-              --notes "Android APK (debug build) for testing. YouTube native stream URLs are refreshed on HTTP 403 with consistent client headers. Fallback uses yt-dlp 2026.10.26 and EJS scripts. VK Video and Rutube use yt-dlp directly. Build and unit tests passed in CI; successful downloading on real Android devices has not been verified. Android VPN is needed if the source is blocked by the network. Only download material you have rights to save." \
-              --prerelease
+              --title "offtube 2.1.0 — новый дизайн и мониторинг загрузки" \
+              --notes "Offtube 2.1.0: новая иконка, монолитный прогресс без повторных циклов, скорость скачивания, объём, ETA, размеры доступных качеств, yt-dlp 2026.10.26. Android APK debug. Скачивайте только материалы, на которые у вас есть права." \
+              --latest
           fi
-          gh release upload "$TAG" release/offtube-v2.0.1-debug.apk --clobber
+          gh release upload "$TAG" release/offtube-2.1.0.apk --clobber
