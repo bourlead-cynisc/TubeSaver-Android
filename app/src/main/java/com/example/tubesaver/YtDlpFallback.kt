@@ -2,7 +2,6 @@ package com.example.tubesaver
 
 import android.content.Context
 import android.os.SystemClock
-import com.yausername.aria2c.Aria2c
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
@@ -15,7 +14,6 @@ class YtDlpFallback(private val context: Context) {
     data class Info(val title: String, val heights: List<Int>)
     private val processId = "offtube-${System.nanoTime()}"
     @Volatile private var cancelled = false
-    @Volatile private var ariaReady = false
 
     companion object {
         private val lock = Any()
@@ -31,17 +29,14 @@ class YtDlpFallback(private val context: Context) {
                 ready = true
             }
         }
-        if (!ariaReady) {
-            try {
-                Aria2c.getInstance().init(context.applicationContext)
-                ariaReady = true
-            } catch (_: Exception) { ariaReady = false }
-        }
     }
 
     fun inspect(link: String): Info {
         init()
         val r = YoutubeDLRequest(link)
+        if (SourceHosts.detect(link) == SourceHosts.Platform.YOUTUBE) {
+            r.addOption("--remote-components", "ejs:github")
+        }
         r.addOption("--dump-single-json")
         r.addOption("--skip-download")
         r.addOption("--no-playlist")
@@ -72,7 +67,12 @@ class YtDlpFallback(private val context: Context) {
         init()
         dir.mkdirs()
         dir.listFiles()?.forEach { it.delete() }
-        fun request(useAria: Boolean): YoutubeDLRequest = YoutubeDLRequest(link).apply {
+        fun request(): YoutubeDLRequest = YoutubeDLRequest(link).apply {
+            if (SourceHosts.detect(link) == SourceHosts.Platform.YOUTUBE) {
+                // YouTube now requires external JS challenge solvers.
+                // QuickJS is provisioned by the Android wrapper; fetch EJS from yt-dlp's official releases.
+                addOption("--remote-components", "ejs:github")
+            }
             addOption("--no-playlist")
             addOption("--no-warnings")
             addOption("--newline")
@@ -83,7 +83,6 @@ class YtDlpFallback(private val context: Context) {
             addOption("--concurrent-fragments", "6")
             addOption("-P", dir.absolutePath)
             addOption("-o", "%(title).90s-%(id)s.%(ext)s")
-            if (useAria) addOption("--downloader", "libaria2c.so")
             if (audioOnly) {
                 addOption("-f", "ba/b")
                 addOption("-x")
@@ -104,14 +103,9 @@ class YtDlpFallback(private val context: Context) {
             }
         }
         try {
-            try {
-                YoutubeDL.getInstance().execute(request(ariaReady), processId, callback)
-            } catch (first: Exception) {
-                if (cancelled || !ariaReady) throw first
-                progress(-1, "Переключаемся на встроенный загрузчик…")
-                dir.listFiles()?.forEach { it.delete() }
-                YoutubeDL.getInstance().execute(request(false), processId, callback)
-            }
+            // yt-dlp's built-in downloader can handle video fragments and YouTube headers
+            // without introducing a second aria2c failure/fallback cycle.
+            YoutubeDL.getInstance().execute(request(), processId, callback)
             if (cancelled) throw IOException("Загрузка отменена")
             val extension = if (audioOnly) "mp3" else "mp4"
             return dir.listFiles()?.filter { it.isFile && it.extension.equals(extension, true) }
