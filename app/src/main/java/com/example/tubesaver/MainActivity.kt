@@ -2,390 +2,436 @@ package com.example.tubesaver
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.graphics.Typeface
-import android.view.View
+import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
+import android.text.InputType
 import android.text.TextWatcher
 import android.text.Editable
-import org.json.JSONObject
-import android.os.Environment
-import android.os.Build
-import android.content.ContentValues
-import android.provider.MediaStore
-import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
-import android.content.res.ColorStateList
-import android.content.Context
 import android.view.Gravity
-import com.yausername.youtubedl_android.YoutubeDL.UpdateChannel
+import android.view.View
 import android.view.ViewGroup
-import android.widget.*
-import com.yausername.youtubedl_android.YoutubeDL
-import com.yausername.youtubedl_android.YoutubeDLRequest
+import android.widget.Button
+import android.widget.EditText
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.ScrollView
+import android.widget.TextView
 import java.io.File
-import java.util.Locale
 import kotlin.concurrent.thread
 
 class MainActivity : Activity() {
- private lateinit var url: EditText
- private lateinit var quality: Spinner
- private lateinit var status: TextView
- private lateinit var button: Button
- private lateinit var progress: ProgressBar
- private lateinit var qualityPicker: TextView
- private val handler = Handler(Looper.getMainLooper())
- @Volatile private var engineReady = false
- @Volatile private var engineError: String? = null
- private val engineLock = Any()
- private var lastTransfer = ""
- private var downloading = false
- private var checkedAt = 0L
- private var checkStartedAt = 0L
- private var pending: Runnable? = null
- private var generation = 0
- private var heights = listOf<Int>()
- private var readyLink = ""
- private val choices = mutableListOf<Pair<String, Int?>>()
- override fun onCreate(savedInstanceState: Bundle?) {
-  super.onCreate(savedInstanceState)
-  val root = LinearLayout(this).apply {
-   orientation = LinearLayout.VERTICAL
-   setPadding(42, 74, 42, 64)
-   setBackgroundColor(Color.rgb(8,13,23))
-  }
-  setContentView(ScrollView(this).apply { addView(root); isFillViewport = true; setBackgroundColor(Color.rgb(8,13,23)) })
-  window.statusBarColor = Color.rgb(8,13,23)
-  window.navigationBarColor = Color.rgb(8,13,23)
-  fun label(s: String, size: Float = 16f): TextView = TextView(this).apply {
-   text = s; textSize = size; setTextColor(Color.WHITE); setPadding(0,12,0,12)
-  }
-  val hero = label("◉  OFFTUBE", 32f).apply { setTypeface(null, Typeface.BOLD); setTextColor(Color.rgb(241,244,255)) }
-  root.addView(hero)
-  root.addView(label("YOUR MEDIA. OFFLINE.", 12f).apply { setTextColor(Color.rgb(89,215,189)) })
-  val intro = label("Сохраняй. Смотри. Повторяй.", 23f).apply { setTypeface(null, Typeface.BOLD) }
-  root.addView(intro)
-  root.addView(label("YouTube   /   VK Видео   /   RUTUBE", 14f).apply { setTextColor(Color.rgb(160,177,218)) })
-  url = EditText(this).apply {
-   hint = "Вставьте ссылку на видео"
-   setSingleLine(true); setTextColor(Color.WHITE); setHintTextColor(Color.LTGRAY)
-   background = GradientDrawable().apply { setColor(Color.rgb(29,39,61)); cornerRadius = 24f; setStroke(2, Color.rgb(75,92,128)) }
-   setPadding(24,20,24,20)
-  }
-  root.addView(url, LinearLayout.LayoutParams(-1, 120))
-  url.addTextChangedListener(object : TextWatcher {
-   override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-   override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { scheduleCheck() }
-   override fun afterTextChanged(s: Editable?) {}
-  })
-  val paste = label("Вставить из буфера обмена", 14f)
-  paste.setTextColor(Color.rgb(155,177,255))
-  paste.setPadding(0,20,0,25)
-  paste.setOnClickListener {
-   val clip = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-   clip.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString()?.let { url.setText(it) }
-  }
-  root.addView(paste)
-  root.addView(label("КАЧЕСТВО", 12f))
-  quality = Spinner(this)
-  setChoices(emptyList())
-  quality.visibility = View.GONE
-  root.addView(quality)
-  qualityPicker = label("⌄  Вставьте ссылку, чтобы выбрать качество", 16f).apply {
-   setTextColor(Color.WHITE)
-   background = popupShape(Color.rgb(31,43,70), 18, Color.rgb(82,103,158))
-   setPadding(30,26,30,26)
-   setOnClickListener { showQualityPopup() }
-  }
-  root.addView(qualityPicker, LinearLayout.LayoutParams(-1, -2))
-  button = Button(this).apply { text = "↓  СОХРАНИТЬ ОФЛАЙН"; setTextColor(Color.WHITE); backgroundTintList = ColorStateList.valueOf(Color.rgb(27,180,155)) }
-  root.addView(button, LinearLayout.LayoutParams(-1, 120))
-  button.backgroundTintList = ColorStateList.valueOf(Color.rgb(27,180,155))
-  root.addView(label("●  ПРОЦЕСС", 12f).apply { setTextColor(Color.rgb(169,184,222)) })
-  progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
-  root.addView(progress, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-  status = label("Готово к загрузке", 15f)
-  root.addView(status)
-  button.setOnClickListener { download() }
-  val update = Button(this).apply { text = "Проверить обновление загрузчика"; setTextColor(Color.WHITE); backgroundTintList = ColorStateList.valueOf(Color.rgb(47,60,86)) }
-  root.addView(update)
-  update.setOnClickListener {
-   update.isEnabled = false
-   status.text = "Проверка обновления..."
-   thread {
-    try { ensureEngine(); YoutubeDL.getInstance().updateYoutubeDL(applicationContext, UpdateChannel.STABLE); runOnUiThread { status.text = "Обновление проверено" } }
-    catch (e: Exception) { runOnUiThread { status.text = "Не удалось обновить. Проверьте интернет." } }
-    finally { runOnUiThread { update.isEnabled = true } }
-   }
-  }
-  root.addView(label("Сохраняйте только материалы, на которые у вас есть права.", 12f).apply { setTextColor(Color.rgb(150,162,190)) })
-  progress.visibility = View.GONE
-  thread { try { ensureEngine() } catch (_: Exception) {} }
- }
- private fun ensureEngine() {
-  if (engineReady) return
-  synchronized(engineLock) {
-   if (!engineReady) {
-    try { YoutubeDL.getInstance().init(applicationContext); engineReady = true; engineError = null }
-    catch (e: Exception) { engineError = e.message; throw e }
-   }
-  }
- }
- private fun popupShape(color: Int, radius: Int, stroke: Int): GradientDrawable =
-  GradientDrawable().apply {
-   setColor(color)
-   cornerRadius = (resources.displayMetrics.density * radius)
-   setStroke((resources.displayMetrics.density * 1.5f).toInt(), stroke)
-  }
- private fun showQualityPopup() {
-  if (readyLink != url.text.toString().trim() || heights.isEmpty()) {
-   AlertDialog.Builder(this).setTitle("Качество пока недоступно")
-    .setMessage("Вставьте ссылку и дождитесь проверки форматов видео.")
-    .setPositiveButton("Понятно", null).show()
-   return
-  }
-  val options = choices.map { it.first }.toTypedArray()
-  AlertDialog.Builder(this)
-   .setTitle("Выберите качество")
-   .setSingleChoiceItems(options, quality.selectedItemPosition.coerceAtLeast(0)) { dialog, index ->
-    quality.setSelection(index)
-    qualityPicker.text = "⌄  " + options[index]
-    dialog.dismiss()
-   }
-   .setNegativeButton("Отмена", null)
-   .show()
- }
- private fun setChoices(values: List<Int>) {
-  heights = values
-  choices.clear()
-  if (values.isNotEmpty()) {
-   choices.add("Лучшее доступное качество" to null)
-   values.forEach { choices.add("${it}p" to it) }
-   choices.add("Аудио MP3" to -1)
-  } else {
-   choices.add("Сначала вставьте ссылку" to null)
-  }
-  quality.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, choices.map { it.first })
-  if (::qualityPicker.isInitialized) qualityPicker.text = if (values.isEmpty()) "⌄  Ожидание проверки видео" else "⌄  Лучшее доступное качество"
- }
- private fun scheduleCheck() {
-  generation++
-  val current = generation
-  pending?.let { handler.removeCallbacks(it) }
-  readyLink = ""
-  setChoices(emptyList())
-  val link = url.text.toString().trim()
-  if (link.isEmpty()) { status.text = "Вставьте ссылку для проверки качества"; return }
-  val uri = android.net.Uri.parse(link)
-  if (uri.scheme != "https" || !isSupportedHost(uri.host)) { status.text = "Нужна HTTPS-ссылка YouTube, VK Видео или RUTUBE"; return }
-  status.text = "Ссылку можно скачивать сразу. Проверяем качество в фоне..."
-  val task = Runnable {
-   checkStartedAt = android.os.SystemClock.elapsedRealtime()
-   status.text = "Проверяем доступные форматы..."
-   thread {
-    try {
-     ensureEngine()
-     val req = YoutubeDLRequest(link)
-     req.addOption("--dump-single-json")
-     req.addOption("--skip-download")
-     req.addOption("--no-playlist")
-     req.addOption("--no-warnings")
-     req.addOption("--socket-timeout", "20")
-     req.addOption("--retries", "2")
-     req.addOption("--extractor-retries", "2")
-    req.addOption("--extractor-args", "youtube:player_client=android")
-     val output = YoutubeDL.getInstance().execute(req).out
-     val data = JSONObject(output.substring(output.indexOf('{')))
-     val formats = data.optJSONArray("formats")
-     val available = sortedSetOf<Int>(compareByDescending { it })
-     if (formats != null) for (i in 0 until formats.length()) {
-      val fmt = formats.optJSONObject(i) ?: continue
-      val height = fmt.optInt("height", 0)
-      if (height > 0 && fmt.optString("vcodec", "none") != "none") available.add(height)
-     }
-     if (available.isEmpty()) data.optInt("height", 0).takeIf { it > 0 }?.let { available.add(it) }
-     runOnUiThread {
-      if (current != generation) return@runOnUiThread
-      if (available.isEmpty()) { status.text = "Не удалось определить качество видео"; return@runOnUiThread }
-      readyLink = link
-      checkedAt = android.os.SystemClock.elapsedRealtime()
-      setChoices(available.toList())
-      status.text = "Найдено: ${data.optString("title", "Без названия")}. Доступно: ${available.joinToString { "${it}p" }}"
-      qualityPicker.animate().scaleX(1.03f).scaleY(1.03f).setDuration(140).withEndAction { qualityPicker.animate().scaleX(1f).scaleY(1f).setDuration(140).start() }.start()
-     }
-    } catch (e: Exception) {
-     runOnUiThread { if (current == generation) status.text = friendlyError(e.message.orEmpty()) }
+    private val dark = Color.rgb(11, 15, 23)
+    private val surface = Color.rgb(24, 30, 42)
+    private val outline = Color.rgb(44, 52, 67)
+    private val muted = Color.rgb(163, 175, 191)
+    private val accent = Color.rgb(189, 246, 102)
+    private lateinit var linkInput: EditText
+    private lateinit var status: TextView
+    private lateinit var title: TextView
+    private lateinit var quality: TextView
+    private lateinit var analyzeBtn: Button
+    private lateinit var downloadBtn: Button
+    private lateinit var cancelBtn: TextView
+    private lateinit var progressBar: ProgressBar
+    private lateinit var recent: TextView
+    private var busy = false
+    private var isDownloading = false
+    private var selectedIndex = 0
+    private var analyzedLink = ""
+    private var selectedTitle = "Видео"
+    private var quickChoices = emptyList<FastYoutubeEngine.Choice>()
+    private var slowHeights = emptyList<Int>()
+    private var quick = false
+    private var lastUri: Uri? = null
+    private var lastAudio = false
+    private var fastEngine: FastYoutubeEngine? = null
+    private var fallback: YtDlpFallback? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        window.statusBarColor = dark
+        window.navigationBarColor = dark
+        window.decorView.systemUiVisibility = 0
+        render()
+        receiveSharedLink(intent)
     }
-   }
-  }
-  pending = task
-  handler.postDelayed(task, 450)
- }
- private fun download() {
-  val link = url.text.toString().trim()
-  val uri = android.net.Uri.parse(link)
-  if (uri.scheme != "https" || !isSupportedHost(uri.host)) {
-   status.text = "Введите HTTPS-ссылку YouTube, VK Видео или RUTUBE"; return
-  }
-  // Metadata is optional: start downloading immediately using the best available format.
-  if (downloading) return
-  downloading = true
-  val selected = if (readyLink == link) choices.getOrNull(quality.selectedItemPosition)?.second else null
-  button.isEnabled = false
-  status.text = "Получаем потоки видео и звука..."
-  val startTime = android.os.SystemClock.elapsedRealtime()
-  progress.visibility = View.VISIBLE
-  progress.isIndeterminate = true
-  progress.progress = 0
-  lastTransfer = ""
-  thread {
-   try {
-    ensureEngine()
-    val dir = File(cacheDir, "downloads").apply { mkdirs() }
-    dir.listFiles()?.forEach { it.delete() }
-    val req = YoutubeDLRequest(link)
-    req.addOption("--no-playlist")
-    req.addOption("--no-warnings")
-    req.addOption("--continue")
-    req.addOption("--socket-timeout", "25")
-    req.addOption("--retries", "2")
-    req.addOption("--fragment-retries", "3")
-    req.addOption("--extractor-retries", "2")
-    req.addOption("-P", dir.absolutePath)
-    req.addOption("-o", "%(title).100s-%(id)s.%(ext)s")
-    req.addOption("--newline")
-    req.addOption("--progress-template", "download:TSBYTES:%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s")
-    if (selected == -1) {
-     req.addOption("-x"); req.addOption("--audio-format", "mp3")
-    } else {
-     val h = selected
-     val cap = if (h == null) "" else "[height<=${h}]"
-     req.addOption("-f", "bv[ext=mp4][vcodec^=avc1]${cap}+ba[ext=m4a]/b[ext=mp4][acodec!=none]${cap}/bv${cap}+ba/b[acodec!=none]${cap}")
-     req.addOption("--merge-output-format", "mp4")
-     req.addOption("--remux-video", "mp4")
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        receiveSharedLink(intent)
     }
-    val onProgress: (Float, Long, String) -> Unit = { p, _, line ->
-     val info = transferInfo(line)
-     runOnUiThread {
-      if (info != null) {
-       lastTransfer = info
-       progress.isIndeterminate = false
-       progress.progress = p.toInt().coerceIn(0,100)
-       status.text = "Скачивание: ${p.toInt().coerceIn(0,100)}%\n$info"
-      } else if (line.contains("Merger", true) || line.contains("VideoConvertor", true) || line.contains("Fixup", true)) {
-       progress.isIndeterminate = true
-       status.text = "Обработка и сохранение MP4..."
-      } else if (line.contains("Destination:", true) || line.contains("[download]", true)) {
-       status.text = if (lastTransfer.isEmpty()) "Соединение установлено, ожидаем данные..." else "Скачивание...\n$lastTransfer"
-      } else if (lastTransfer.isEmpty()) {
-       val elapsed = (android.os.SystemClock.elapsedRealtime() - startTime) / 1000
-       status.text = "Ожидаем ответ сервера и аудиопоток... ${elapsed} с"
-      }
-     }
+
+    private fun receiveSharedLink(intent: Intent?) {
+        val raw = if (intent?.action == Intent.ACTION_SEND) intent.getStringExtra(Intent.EXTRA_TEXT)
+                  else if (intent?.action == Intent.ACTION_VIEW) intent.dataString else null
+        if (raw != null) {
+            val found = Regex("https://[^\\s]+", RegexOption.IGNORE_CASE).find(raw)?.value?.trimEnd('.', ')', ',') ?: raw
+            linkInput.setText(found)
+            linkInput.setSelection(linkInput.text.length)
+            invalidateSelection()
+        }
     }
-    try {
-     YoutubeDL.getInstance().execute(req, "tube-${System.nanoTime()}", onProgress)
-    } catch (first: Exception) {
-     val msg = first.message.orEmpty()
-     val host = android.net.Uri.parse(link).host.orEmpty().lowercase()
-     val youtube = host == "youtu.be" || host == "youtube.com" || host.endsWith(".youtube.com")
-     if (!youtube || !(msg.contains("403") || msg.contains("Sign in", true) || msg.contains("Requested format", true))) throw first
-     runOnUiThread { progress.isIndeterminate = true; status.text = "YouTube отклонил запрос. Пробуем другой клиент..." }
-     dir.listFiles()?.forEach { it.delete() }
-     val fallback = YoutubeDLRequest(link)
-     fallback.addOption("--no-playlist")
-     fallback.addOption("--socket-timeout", "25")
-     fallback.addOption("--retries", "2")
-     fallback.addOption("--extractor-args", "youtube:player_client=web_safari")
-     fallback.addOption("-P", dir.absolutePath)
-     fallback.addOption("-o", "%(title).100s-%(id)s.%(ext)s")
-     fallback.addOption("--newline")
-     fallback.addOption("--progress-template", "download:TSBYTES:%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s")
-     if (selected == -1) {
-      fallback.addOption("-x")
-      fallback.addOption("--audio-format", "mp3")
-     } else {
-      val cap = if (selected == null) "" else "[height<=${selected}]"
-      fallback.addOption("-f", "b[ext=mp4][acodec!=none]${cap}/b[acodec!=none]${cap}")
-      fallback.addOption("--remux-video", "mp4")
-     }
-     try {
-      YoutubeDL.getInstance().execute(fallback, "tube-fallback-${System.nanoTime()}", onProgress)
-     } catch (second: Exception) {
-      throw IllegalStateException("Основной: ${msg.take(140)}; резервный: ${second.message.orEmpty().take(180)}", second)
-     }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+    private fun bg(color: Int, radius: Int = 20, stroke: Int? = null): GradientDrawable =
+        GradientDrawable().apply {
+            setColor(color)
+            cornerRadius = dp(radius).toFloat()
+            if (stroke != null) setStroke(dp(1), stroke)
+        }
+    private fun text(value: String, size: Float, color: Int = Color.WHITE, bold: Boolean = false): TextView =
+        TextView(this).apply {
+            this.text = value
+            textSize = size
+            setTextColor(color)
+            if (bold) setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+            includeFontPadding = false
+        }
+    private fun gap(height: Int) = View(this).apply { layoutParams = LinearLayout.LayoutParams(1, dp(height)) }
+    private fun column() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+    private fun button(label: String, filled: Boolean = true): Button = Button(this).apply {
+        text = label
+        textSize = 14f
+        isAllCaps = false
+        setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+        setTextColor(if (filled) dark else Color.WHITE)
+        background = bg(if (filled) accent else surface, 18, if (filled) null else outline)
+        minHeight = dp(56)
     }
-    runOnUiThread { status.text = "Проверяем результат и сохраняем файл..." }
-    val result = dir.listFiles()?.filter { it.isFile && (if (selected == -1) it.extension.equals("mp3", true) else it.extension.equals("mp4", true)) }?.maxByOrNull { it.lastModified() }
-     ?: error("Файл не найден")
-    val clean = if (result.name.endsWith(".webm.mp4", true)) File(result.parentFile, result.name.removeSuffix(".webm.mp4") + ".mp4").also { if (!result.renameTo(it)) error("Не удалось переименовать файл") } else result
-    if (clean.length() == 0L) error("Загруженный файл пуст")
-    if (selected != -1) verifyAudioTrack(clean)
-    save(clean)
-    clean.delete()
-    runOnUiThread { progress.isIndeterminate = false; progress.progress = 100; status.text = "Сохранено: ${clean.name}" }
-   } catch (e: Exception) {
-    runOnUiThread { progress.isIndeterminate = false; status.text = friendlyError(e.message.orEmpty()) }
-   } finally {
-    runOnUiThread { downloading = false; button.isEnabled = true }
-   }
-  }
- }
- private fun verifyAudioTrack(file: File) {
-  val retriever = android.media.MediaMetadataRetriever()
-  try {
-   retriever.setDataSource(file.absolutePath)
-   val audio = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO)
-   val video = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO)
-   if (audio != "yes" || video != "yes") error("Файл без видео или звуковой дорожки. Сохранение отменено.")
-  } finally { retriever.release() }
- }
- private fun transferInfo(line: String): String? {
-  val raw = line.substringAfter("TSBYTES:", "")
-  if (raw.isEmpty()) return null
-  val parts = raw.trim().split("|")
-  if (parts.size < 5) return null
-  fun num(s: String) = s.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0 }
-  val done = num(parts[0]) ?: return null
-  val total = num(parts[1]) ?: num(parts[2])
-  val speed = num(parts[3])
-  val eta = num(parts[4])
-  fun mb(v: Double) = String.format(Locale.US, "%.1f МБ", v / 1048576.0)
-  return mb(done) + (total?.let { " из " + mb(it) } ?: " (размер неизвестен)") +
-   (speed?.let { " • " + mb(it) + "/с" } ?: "") +
-   (eta?.let { " • осталось ~" + it.toLong() / 60 + "м " + it.toLong() % 60 + "с" } ?: "")
- }
- private fun isSupportedHost(raw: String?): Boolean {
-  val host = raw?.lowercase() ?: return false
-  return listOf("youtube.com","youtu.be","vk.com","vkvideo.ru","vk.ru","rutube.ru").any { host == it || host.endsWith("."+it) }
- }
- private fun friendlyError(message: String): String = when {
-  message.contains("No address associated with hostname", true) || message.contains("name resolution", true) -> "Ошибка DNS: сервер недоступен. Проверьте интернет, VPN и DNS. Попробуйте открыть ссылку в браузере."
-  message.contains("403") -> "Ошибка доступа 403. " + message.takeLast(210)
-  message.contains("Unsupported URL", true) -> "Движок пока не поддерживает эту ссылку."
-  message.contains("Sign in", true) -> "YouTube запросил авторизацию или проверку клиента. " + message.takeLast(180)
-  message.contains("Requested format", true) -> "Нет подходящего видео со звуком. Попробуйте другое качество."
-  message.contains("timed out", true) || message.contains("timeout", true) -> "Сервер не ответил вовремя. Повторите попытку."
-  message.contains("429") -> "Сервер ограничил запросы (429). Повторите позже."
-  message.contains("Файл без видео") -> message
-  else -> "Не удалось скачать видео: " + message.take(180)
- }
- private fun save(file: File) {
-  if (Build.VERSION.SDK_INT < 29) {
-   val dest = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: error("Нет папки")
-   file.copyTo(File(dest,file.name),overwrite=true); return
-  }
-  val values = ContentValues().apply {
-   put(MediaStore.MediaColumns.DISPLAY_NAME,file.name)
-   put(MediaStore.MediaColumns.MIME_TYPE,if(file.extension=="mp3") "audio/mpeg" else "video/mp4")
-   put(MediaStore.MediaColumns.RELATIVE_PATH,"Download/TubeSaver")
-   put(MediaStore.MediaColumns.IS_PENDING,1)
-  }
-  val dest = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,values) ?: error("Не удалось создать файл")
-  try {
-   contentResolver.openOutputStream(dest)?.use { out -> file.inputStream().use { it.copyTo(out) } } ?: error("Нет доступа к файлу")
-   contentResolver.update(dest,ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING,0) },null,null)
-  } catch(e: Exception) { contentResolver.delete(dest,null,null); throw e }
- }
+
+    private fun render() {
+        val screen = ScrollView(this).apply {
+            setBackgroundColor(dark)
+            isFillViewport = true
+            clipToPadding = false
+        }
+        val main = column().apply { setPadding(dp(24), dp(32), dp(24), dp(36)) }
+        screen.addView(main)
+        setContentView(screen)
+
+        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val logo = ImageView(this).apply { setImageResource(R.drawable.offtube_icon) }
+        head.addView(logo, LinearLayout.LayoutParams(dp(44), dp(44)))
+        val brand = text("offtube", 29f, Color.WHITE, true).apply { setPadding(dp(10), 0, 0, 0) }
+        head.addView(brand)
+        main.addView(head)
+        main.addView(gap(36))
+        main.addView(text("Видео всегда\nпод рукой.", 34f, Color.WHITE, true))
+        main.addView(gap(12))
+        main.addView(text("Скачивайте видео и аудио. Без лишних экранов.", 14f, muted))
+        main.addView(gap(26))
+
+        val sourceRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        for (source in listOf("YouTube", "RUTUBE", "VK Видео")) {
+            val chip = text(source, 12f, muted, true).apply {
+                gravity = Gravity.CENTER
+                setPadding(dp(10), dp(9), dp(10), dp(9))
+                background = bg(surface, 12, outline)
+            }
+            val params = LinearLayout.LayoutParams(0, dp(35), 1f).apply { rightMargin = dp(if (source == "VK Видео") 0 else 7) }
+            sourceRow.addView(chip, params)
+        }
+        main.addView(sourceRow)
+        main.addView(gap(22))
+
+        val card = column().apply {
+            background = bg(surface, 23, outline)
+            setPadding(dp(18), dp(20), dp(18), dp(20))
+        }
+        card.addView(text("ССЫЛКА НА ВИДЕО", 11f, muted, true))
+        card.addView(gap(12))
+        linkInput = EditText(this).apply {
+            hint = "https://..."
+            setSingleLine(true)
+            textSize = 15f
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.rgb(111, 126, 144))
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = bg(dark, 13, outline)
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { invalidateSelection() }
+                override fun afterTextChanged(s: Editable?) {}
+            })
+        }
+        card.addView(linkInput, LinearLayout.LayoutParams(-1, dp(56)))
+        card.addView(gap(12))
+        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val paste = text("▣  Вставить", 14f, accent, true).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setOnClickListener {
+                val manager = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                val item = manager.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)
+                val value = item?.coerceToText(this@MainActivity)?.toString()
+                if (!value.isNullOrBlank()) { linkInput.setText(value); invalidateSelection() }
+            }
+        }
+        actions.addView(paste, LinearLayout.LayoutParams(0, dp(40), 1f))
+        analyzeBtn = button("Найти видео", false)
+        actions.addView(analyzeBtn, LinearLayout.LayoutParams(dp(143), dp(44)))
+        analyzeBtn.setOnClickListener { analyze() }
+        card.addView(actions)
+        card.addView(gap(23))
+        card.addView(text("ФОРМАТ И КАЧЕСТВО", 11f, muted, true))
+        card.addView(gap(10))
+        quality = text("⌄  Лучшее доступное · MP4 со звуком", 15f, Color.WHITE).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(6), dp(10), dp(6))
+            background = bg(dark, 13, outline)
+            setOnClickListener { showChoices() }
+        }
+        card.addView(quality, LinearLayout.LayoutParams(-1, dp(56)))
+        main.addView(card)
+        main.addView(gap(16))
+
+        downloadBtn = button("↓   Скачать", true)
+        main.addView(downloadBtn, LinearLayout.LayoutParams(-1, dp(60)))
+        downloadBtn.setOnClickListener { startDownload() }
+        main.addView(gap(18))
+        val progressCard = column().apply {
+            background = bg(surface, 20, outline)
+            setPadding(dp(18), dp(18), dp(18), dp(18))
+        }
+        val statusHeading = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        statusHeading.addView(text("СТАТУС", 11f, muted, true), LinearLayout.LayoutParams(0, -2, 1f))
+        cancelBtn = text("Отменить", 12f, accent, true).apply {
+            visibility = View.GONE
+            setOnClickListener {
+                fastEngine?.cancel()
+                fallback?.cancel()
+                status.text = "Отмена загрузки…"
+            }
+        }
+        statusHeading.addView(cancelBtn)
+        progressCard.addView(statusHeading)
+        progressCard.addView(gap(11))
+        title = text("Ссылка ещё не выбрана", 15f, Color.WHITE, true)
+        progressCard.addView(title)
+        progressCard.addView(gap(8))
+        status = text("Вставьте ссылку и нажмите «Найти видео»", 13f, muted)
+        progressCard.addView(status)
+        progressCard.addView(gap(16))
+        progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progressTintList = ColorStateList.valueOf(accent)
+            progressBackgroundTintList = ColorStateList.valueOf(outline)
+            visibility = View.GONE
+        }
+        progressCard.addView(progressBar, LinearLayout.LayoutParams(-1, dp(5)))
+        main.addView(progressCard)
+        main.addView(gap(25))
+        main.addView(text("ПОСЛЕДНИЕ ЗАГРУЗКИ", 11f, muted, true))
+        main.addView(gap(9))
+        recent = text(getPreferences(0).getString("recent", "Пока нет скачанных файлов") ?: "", 13f, muted)
+        recent.setPadding(0, dp(4), 0, dp(10))
+        recent.setOnClickListener { lastUri?.let { openFile(it, lastAudio) } }
+        main.addView(recent)
+        main.addView(gap(18))
+        main.addView(text("Сохраняйте материалы, на загрузку которых у вас есть права. Защищённые видео не поддерживаются.", 11f, muted))
+    }
+
+    private fun invalidateSelection() {
+        if (!::linkInput.isInitialized) return
+        if (linkInput.text.toString().trim() == analyzedLink) return
+        analyzedLink = ""
+        selectedIndex = 0
+        quick = false
+        selectedTitle = "Видео"
+        quickChoices = emptyList()
+        slowHeights = emptyList()
+        if (::quality.isInitialized) quality.text = "⌄  Лучшее доступное · MP4 со звуком"
+    }
+
+    private fun showChoices() {
+        val labels = when {
+            quick -> quickChoices.map { it.label }
+            slowHeights.isNotEmpty() -> listOf("Лучшее доступное · MP4 + звук") + slowHeights.map { "${it}p · MP4 + звук" } + "Только аудио · MP3"
+            else -> listOf("Лучшее доступное · MP4 + звук", "Только аудио · MP3")
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Формат загрузки")
+            .setSingleChoiceItems(labels.toTypedArray(), selectedIndex.coerceIn(0, labels.size - 1)) { d, index ->
+                selectedIndex = index
+                quality.text = "⌄  ${labels[index]}"
+                d.dismiss()
+            }.setNegativeButton("Отмена", null).show()
+    }
+
+    private fun validLink(): Pair<String, SourceHosts.Platform>? {
+        val url = linkInput.text.toString().trim()
+        val platform = SourceHosts.detect(url)
+        if (platform == null) {
+            status.text = "Нужна HTTPS-ссылка YouTube, Rutube или VK Видео"
+            return null
+        }
+        return url to platform
+    }
+
+    private fun setBusy(value: Boolean, downloading: Boolean = false) {
+        busy = value
+        isDownloading = downloading
+        analyzeBtn.isEnabled = !value
+        downloadBtn.isEnabled = !value
+        linkInput.isEnabled = !value
+        cancelBtn.visibility = if (downloading) View.VISIBLE else View.GONE
+        if (!value) progressBar.visibility = View.GONE
+    }
+
+    private fun updateProgress(percent: Int, message: String) {
+        runOnUiThread {
+            progressBar.visibility = View.VISIBLE
+            progressBar.isIndeterminate = percent < 0
+            if (percent >= 0) progressBar.progress = percent
+            status.text = message
+        }
+    }
+
+    private fun analyze() {
+        if (busy) return
+        val (link, platform) = validLink() ?: return
+        setBusy(true)
+        title.text = "Получаем информацию"
+        updateProgress(-1, "Проверяем доступные форматы…")
+        thread(name = "offtube-inspect") {
+            try {
+                val fast = platform == SourceHosts.Platform.YOUTUBE
+                var fastResult: FastYoutubeEngine.Video? = null
+                var slowResult: YtDlpFallback.Info? = null
+                if (fast) {
+                    try {
+                        val engine = FastYoutubeEngine()
+                        fastResult = engine.inspect(link)
+                        fastEngine = engine
+                    } catch (_: Exception) {
+                        slowResult = YtDlpFallback(this).also { fallback = it }.inspect(link)
+                    }
+                } else {
+                    slowResult = YtDlpFallback(this).also { fallback = it }.inspect(link)
+                }
+                runOnUiThread {
+                    analyzedLink = link
+                    selectedIndex = 0
+                    quick = fastResult != null
+                    quickChoices = fastResult?.choices ?: emptyList()
+                    slowHeights = slowResult?.heights ?: emptyList()
+                    selectedTitle = fastResult?.title ?: slowResult?.title ?: "Видео"
+                    title.text = selectedTitle
+                    quality.text = if (quickChoices.isNotEmpty()) "⌄  ${quickChoices[0].label}" else "⌄  Лучшее доступное · MP4 со звуком"
+                    status.text = if (quick) "Быстрый движок готов · ${quickChoices.size} форматов" else "Форматы получены · резервный движок"
+                    setBusy(false)
+                }
+            } catch (e: Exception) {
+                runOnUiThread { title.text = "Ошибка проверки"; status.text = explain(e); setBusy(false) }
+            }
+        }
+    }
+
+    private fun startDownload() {
+        if (busy) return
+        val (link, platform) = validLink() ?: return
+        setBusy(true, downloading = true)
+        title.text = if (analyzedLink == link) selectedTitle else "Подключаемся к сервису…"
+        updateProgress(-1, "Готовим загрузку…")
+        thread(name = "offtube-download") {
+            val directory = File(cacheDir, "offtube-${System.nanoTime()}").apply { mkdirs() }
+            try {
+                var option: FastYoutubeEngine.Choice? = null
+                var audioOnly = false
+                var fast = false
+                var height: Int? = null
+                if (platform == SourceHosts.Platform.YOUTUBE) {
+                    if (analyzedLink == link && quickChoices.isNotEmpty()) {
+                        fast = true
+                        option = quickChoices.getOrNull(selectedIndex) ?: quickChoices[0]
+                    } else {
+                        try {
+                            val engine = FastYoutubeEngine()
+                            fastEngine = engine
+                            val data = engine.inspect(link)
+                            selectedTitle = data.title
+                            option = data.choices.firstOrNull()
+                            fast = option != null
+                        } catch (_: Exception) { fast = false }
+                    }
+                }
+                if (!fast) {
+                    if (analyzedLink == link && !quick) {
+                        audioOnly = selectedIndex == slowHeights.size + 1
+                        height = slowHeights.getOrNull(selectedIndex - 1)
+                    } else if (selectedIndex == 1) {
+                        // Before inspection, the second option in the basic picker is MP3.
+                        audioOnly = true
+                    }
+                }
+                val result: File = if (fast && option != null) {
+                    val eng = fastEngine ?: FastYoutubeEngine().also { fastEngine = it }
+                    audioOnly = option.audioOnly
+                    try {
+                        eng.download(option, directory, ::updateProgress)
+                    } catch (nativeError: Exception) {
+                        if (nativeError.message.orEmpty().contains("отмен", true)) throw nativeError
+                        updateProgress(-1, "Переключаемся на резервный способ…")
+                        directory.listFiles()?.forEach { it.delete() }
+                        val slow = fallback ?: YtDlpFallback(this).also { fallback = it }
+                        slow.download(link, option.height.takeIf { it > 0 }, audioOnly, directory, ::updateProgress)
+                    }
+                } else {
+                    val eng = fallback ?: YtDlpFallback(this).also { fallback = it }
+                    eng.download(link, height, audioOnly, directory, ::updateProgress)
+                }
+                updateProgress(-1, "Проверяем видео и звук…")
+                SaveMedia.verify(result, audioOnly)
+                updateProgress(-1, "Сохраняем в Download/OffTube…")
+                val finalTitle = if (analyzedLink == link || fast) selectedTitle else result.nameWithoutExtension.substringBeforeLast('-').ifBlank { "Видео" }
+                val uri = SaveMedia.save(this, result, finalTitle, audioOnly)
+                runOnUiThread {
+                    lastUri = uri
+                    lastAudio = audioOnly
+                    title.text = "Готово ✓"
+                    status.text = "Файл сохранён · нажмите ниже, чтобы открыть"
+                    progressBar.isIndeterminate = false
+                    progressBar.progress = 100
+                    recent.text = "↗  $finalTitle"
+                    getPreferences(0).edit().putString("recent", "↗  $finalTitle").apply()
+                    setBusy(false)
+                    progressBar.visibility = View.VISIBLE
+                }
+            } catch (e: Exception) {
+                runOnUiThread { title.text = "Не удалось скачать"; status.text = explain(e); setBusy(false) }
+            } finally {
+                directory.deleteRecursively()
+            }
+        }
+    }
+
+    private fun openFile(uri: Uri, audioOnly: Boolean) {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, if (audioOnly) "audio/*" else "video/mp4")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            })
+        } catch (_: Exception) { status.text = "Откройте файл в приложении «Файлы»" }
+    }
+
+    private fun explain(e: Exception): String {
+        val message = (e.cause?.message ?: e.message ?: "Неизвестная ошибка").take(200)
+        return when {
+            message.contains("403") -> "HTTP 403: сервер отказал в доступе. Проверьте VPN или повторите позже."
+            message.contains("timed out", true) -> "Сервер не ответил вовремя. Проверьте VPN и интернет."
+            message.contains("Unable to resolve host", true) || message.contains("name resolution", true) -> "Ошибка DNS. Проверьте VPN и подключение."
+            message.contains("отмен", true) -> "Загрузка отменена"
+            else -> message
+        }
+    }
 }

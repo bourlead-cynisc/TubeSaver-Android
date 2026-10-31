@@ -1,11 +1,31 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
- <uses-permission android:name="android.permission.INTERNET"/>
- <application android:extractNativeLibs="true" android:label="OffTube" android:icon="@drawable/offtube_icon" android:theme="@android:style/Theme.Material.Light.NoActionBar">
-  <activity android:name=".MainActivity" android:exported="true">
-   <intent-filter>
-    <action android:name="android.intent.action.MAIN"/>
-    <category android:name="android.intent.category.LAUNCHER"/>
-   </intent-filter>
-  </activity>
- </application>
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application
+        android:allowBackup="false"
+        android:usesCleartextTraffic="false"
+        android:extractNativeLibs="true"
+        android:label="offtube"
+        android:icon="@drawable/offtube_icon"
+        android:theme="@android:style/Theme.Material.NoActionBar">
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="www.youtube.com" />
+                <data android:scheme="https" android:host="youtu.be" />
+                <data android:scheme="https" android:host="rutube.ru" />
+                <data android:scheme="https" android:host="vkvideo.ru" />
+            </intent-filter>
+        </activity>
+    </application>
 </manifest>
