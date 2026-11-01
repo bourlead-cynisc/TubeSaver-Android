@@ -12,6 +12,8 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.InputType
 import android.text.TextWatcher
 import android.text.Editable
@@ -59,6 +61,57 @@ class MainActivity : Activity() {
     private var fastEngine: FastYoutubeEngine? = null
     private var fallback: YtDlpFallback? = null
     private val sourceChips = mutableListOf<Pair<String, TextView>>()
+    private val handler = Handler(Looper.getMainLooper())
+    private var inspectToken = 0
+    private var serviceUiActive = false
+    private var lastHandledUpdate = 0L
+    private val statusPoll = object : Runnable {
+        override fun run() {
+            refreshServiceState()
+            handler.postDelayed(this, 650L)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        handler.removeCallbacks(statusPoll)
+        handler.post(statusPoll)
+    }
+    override fun onPause() {
+        handler.removeCallbacks(statusPoll)
+        super.onPause()
+    }
+    private fun refreshServiceState() {
+        if (!::status.isInitialized) return
+        val prefs = getSharedPreferences(DownloadService.STATE_PREFS, MODE_PRIVATE)
+        val active = prefs.getBoolean("active", false)
+        val updated = prefs.getLong("updated", 0L)
+        if (updated == 0L) return
+        if (active != serviceUiActive) {
+            serviceUiActive = active
+            setBusy(active, active)
+        }
+        if (active || updated > lastHandledUpdate) {
+            lastHandledUpdate = updated
+            val percent = prefs.getInt("progress", -1)
+            if (percent >= 0) {
+                displayedPercent = maxOf(displayedPercent, percent)
+                progressBar.isIndeterminate = false
+                progressBar.progress = displayedPercent.coerceIn(0, 100)
+            } else {
+                progressBar.isIndeterminate = true
+            }
+            progressBar.visibility = View.VISIBLE
+            title.text = prefs.getString("title", "Видео") ?: "Видео"
+            status.text = prefs.getString("message", "") ?: ""
+            if (!active && percent == 100) {
+                title.text = "Готово ✓"
+                lastUri = prefs.getString("uri", null)?.let(Uri::parse)
+                lastAudio = prefs.getBoolean("audioOnly", false)
+                recent.text = prefs.getString("recent", "Последняя загрузка") ?: ""
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -213,8 +266,7 @@ class MainActivity : Activity() {
         cancelBtn = text("Отменить", 12f, accent, true).apply {
             visibility = View.GONE
             setOnClickListener {
-                fastEngine?.cancel()
-                fallback?.cancel()
+                DownloadService.cancel(this@MainActivity)
                 status.text = "Отмена загрузки…"
             }
         }
@@ -238,7 +290,8 @@ class MainActivity : Activity() {
         main.addView(gap(25))
         main.addView(text("ПОСЛЕДНИЕ ЗАГРУЗКИ", 11f, muted, true))
         main.addView(gap(9))
-        recent = text(getPreferences(0).getString("recent", "Пока нет скачанных файлов") ?: "", 13f, muted)
+        recent = text(getSharedPreferences(DownloadService.STATE_PREFS, MODE_PRIVATE)
+            .getString("recent", "Пока нет скачанных файлов") ?: "", 13f, muted)
         recent.setPadding(0, dp(4), 0, dp(10))
         recent.setOnClickListener { lastUri?.let { openFile(it, lastAudio) } }
         main.addView(recent)
@@ -261,6 +314,7 @@ class MainActivity : Activity() {
                 if (active) accent else outline)
         }
         if (linkInput.text.toString().trim() == analyzedLink) return
+        inspectToken++
         analyzedLink = ""
         selectedIndex = 0
         quick = false
@@ -339,6 +393,16 @@ class MainActivity : Activity() {
         if (busy) return
         val (link, platform) = validLink() ?: return
         setBusy(true)
+        val token = ++inspectToken
+        handler.postDelayed({
+            if (token == inspectToken && busy && !isDownloading) {
+                inspectToken++
+                fallback?.cancel()
+                setBusy(false)
+                title.text = "Поиск дольше 5 секунд"
+                status.text = "Сервер отвечает медленно. Можно скачать в автоматическом качестве."
+            }
+        }, 5000L)
         title.text = "Получаем информацию"
         updateProgress(-1, "Проверяем доступные форматы…")
         thread(name = "offtube-inspect") {
@@ -358,6 +422,7 @@ class MainActivity : Activity() {
                     slowResult = YtDlpFallback(this).also { fallback = it }.inspect(link)
                 }
                 runOnUiThread {
+                    if (token != inspectToken || isDownloading || isFinishing) return@runOnUiThread
                     analyzedLink = link
                     selectedIndex = 0
                     quick = fastResult != null
@@ -366,101 +431,61 @@ class MainActivity : Activity() {
                     slowSizes = slowResult?.sizes ?: emptyMap()
                     slowBestSize = slowResult?.bestSize
                     selectedTitle = fastResult?.title ?: slowResult?.title ?: "Видео"
+                    if (fastResult != null) {
+                        DownloadService.sessionLink = link
+                        DownloadService.engine = fastEngine
+                        DownloadService.sessionChoices = quickChoices
+                    }
                     title.text = selectedTitle
                     quality.text = if (quickChoices.isNotEmpty()) "⌄  ${quickChoices[0].label}" else "⌄  Лучшее доступное · MP4 со звуком" + sizeLabel(slowBestSize)
                     status.text = if (quick) "Быстрый движок готов · ${quickChoices.size} форматов" else "Форматы получены · резервный движок"
                     setBusy(false)
                 }
             } catch (e: Exception) {
-                runOnUiThread { title.text = "Ошибка проверки"; status.text = explain(e); setBusy(false) }
+                runOnUiThread {
+                    if (token != inspectToken || isDownloading || isFinishing) return@runOnUiThread
+                    title.text = "Ошибка проверки"
+                    status.text = explain(e)
+                    setBusy(false)
+                }
             }
         }
     }
 
     private fun startDownload() {
-        if (busy) return
+        if (DownloadService.running || serviceUiActive || busy) return
         val (link, platform) = validLink() ?: return
+        val inspected = analyzedLink == link
+        val useFast = inspected && quick && quickChoices.isNotEmpty()
+        val choice = if (useFast) quickChoices.getOrNull(selectedIndex) ?: quickChoices[0] else null
+        val audio = choice?.audioOnly ?: (if (inspected && !quick)
+            selectedIndex == slowHeights.size + 1 else selectedIndex == 1)
+        val height = if (choice != null) choice.height else if (inspected && !quick)
+            slowHeights.getOrNull(selectedIndex - 1) ?: 0 else 0
+        val expected = if (choice != null) choice.sizeBytes?.let {
+            YtDlpFallback.FormatSize(it, false)
+        } else if (inspected && !quick && !audio) {
+            if (selectedIndex == 0) slowBestSize else slowSizes[height]
+        } else null
+        val req = Intent(this, DownloadService::class.java).apply {
+            putExtra("link", link)
+            putExtra("title", if (inspected) selectedTitle else "Видео")
+            putExtra("audio", audio)
+            putExtra("height", height)
+            putExtra("choiceIndex", selectedIndex)
+            putExtra("fast", useFast)
+            putExtra("estimatedBytes", expected?.bytes ?: -1L)
+            putExtra("approximate", expected?.approximate ?: true)
+        }
         displayedPercent = -1
-        setBusy(true, downloading = true)
-        title.text = if (analyzedLink == link) selectedTitle else "Подключаемся к сервису…"
-        updateProgress(-1, "Готовим загрузку…")
-        thread(name = "offtube-download") {
-            val directory = File(cacheDir, "offtube-${System.nanoTime()}").apply { mkdirs() }
-            try {
-                var option: FastYoutubeEngine.Choice? = null
-                var audioOnly = false
-                var fast = false
-                var height: Int? = null
-                if (platform == SourceHosts.Platform.YOUTUBE) {
-                    if (analyzedLink == link && quickChoices.isNotEmpty()) {
-                        fast = true
-                        option = quickChoices.getOrNull(selectedIndex) ?: quickChoices[0]
-                    } else {
-                        try {
-                            val engine = FastYoutubeEngine()
-                            fastEngine = engine
-                            val data = engine.inspect(link)
-                            selectedTitle = data.title
-                            option = data.choices.firstOrNull()
-                            fast = option != null
-                        } catch (_: Exception) { fast = false }
-                    }
-                }
-                if (!fast) {
-                    if (analyzedLink == link && !quick) {
-                        audioOnly = selectedIndex == slowHeights.size + 1
-                        height = slowHeights.getOrNull(selectedIndex - 1)
-                    } else if (selectedIndex == 1) {
-                        // Before inspection, the second option in the basic picker is MP3.
-                        audioOnly = true
-                    }
-                }
-                val result: File = if (fast && option != null) {
-                    val eng = fastEngine ?: FastYoutubeEngine().also { fastEngine = it }
-                    audioOnly = option.audioOnly
-                    try {
-                        eng.download(link, option, directory, ::updateProgress)
-                    } catch (nativeError: Exception) {
-                        if (nativeError.message.orEmpty().contains("отмен", true)) throw nativeError
-                        updateProgress(-1, "Переключаемся на резервный способ…")
-                        directory.listFiles()?.forEach { it.delete() }
-                        val slow = fallback ?: YtDlpFallback(this).also { fallback = it }
-                        try {
-                            slow.download(link, option.height.takeIf { it > 0 }, audioOnly, directory, ::updateProgress)
-                        } catch (fallbackError: Exception) {
-                            val first = nativeError.message.orEmpty().take(120)
-                            val second = fallbackError.message.orEmpty().take(160)
-                            throw java.io.IOException("Быстрый способ: $first. Резервный: $second", fallbackError)
-                        }
-                    }
-                } else {
-                    val eng = fallback ?: YtDlpFallback(this).also { fallback = it }
-                    val estimated = if (audioOnly || analyzedLink != link) null
-                        else if (selectedIndex == 0) slowBestSize else height?.let { slowSizes[it] }
-                    eng.download(link, height, audioOnly, directory, ::updateProgress, estimated)
-                }
-                updateProgress(-1, "Проверяем видео и звук…")
-                SaveMedia.verify(result, audioOnly)
-                updateProgress(-1, "Сохраняем в Download/OffTube…")
-                val finalTitle = if (analyzedLink == link || fast) selectedTitle else result.nameWithoutExtension.substringBeforeLast('-').ifBlank { "Видео" }
-                val uri = SaveMedia.save(this, result, finalTitle, audioOnly)
-                runOnUiThread {
-                    lastUri = uri
-                    lastAudio = audioOnly
-                    title.text = "Готово ✓"
-                    status.text = "Файл сохранён · нажмите ниже, чтобы открыть"
-                    progressBar.isIndeterminate = false
-                    progressBar.progress = 100
-                    recent.text = "↗  $finalTitle"
-                    getPreferences(0).edit().putString("recent", "↗  $finalTitle").apply()
-                    setBusy(false)
-                    progressBar.visibility = View.VISIBLE
-                }
-            } catch (e: Exception) {
-                runOnUiThread { title.text = "Не удалось скачать"; status.text = explain(e); setBusy(false) }
-            } finally {
-                directory.deleteRecursively()
-            }
+        status.text = "Запускаем фоновую загрузку…"
+        title.text = if (inspected) selectedTitle else "Видео"
+        setBusy(true, true)
+        try {
+            DownloadService.start(this, req)
+        } catch (e: Exception) {
+            setBusy(false)
+            status.text = "Не удалось запустить фоновую службу: " + e.message
         }
     }
 
