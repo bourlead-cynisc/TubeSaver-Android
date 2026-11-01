@@ -87,8 +87,15 @@ class MainActivity : Activity() {
     private fun refreshServiceState() {
         if (!::status.isInitialized) return
         val prefs = getSharedPreferences(DownloadService.STATE_PREFS, MODE_PRIVATE)
-        val active = prefs.getBoolean("active", false)
+        var active = prefs.getBoolean("active", false)
         val updated = prefs.getLong("updated", 0L)
+        if (active && !DownloadService.running &&
+            System.currentTimeMillis() - updated > 15000L) {
+            active = false
+            prefs.edit().putBoolean("active", false).putInt("progress", -1)
+                .putString("message", "Загрузка была прервана системой. Повторите попытку.")
+                .putLong("updated", System.currentTimeMillis()).apply()
+        }
         if (updated == 0L) return
         if (active != serviceUiActive) {
             serviceUiActive = active

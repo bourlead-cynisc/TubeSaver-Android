@@ -11,6 +11,7 @@ import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.os.SystemClock
 import java.io.File
 import kotlin.concurrent.thread
@@ -47,6 +48,7 @@ class DownloadService : Service() {
     private var lastPersistAt = 0L
     private var currentTitle = "Видео"
     private var lastProgress = -1
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -101,6 +103,9 @@ class DownloadService : Service() {
                 currentTitle = intent.getStringExtra("title")?.ifBlank { "Видео" } ?: "Видео"
                 lastProgress = -1
                 foreground()
+                wakeLock = (getSystemService(Context.POWER_SERVICE) as PowerManager)
+                    .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "offtube:active-download")
+                    .apply { acquire(2 * 60 * 60 * 1000L) }
                 saveStatus(true, -1, "Подготовка запущена · можно закрыть приложение", currentTitle)
                 val copy = Intent(intent)
                 thread(name = "offtube-foreground-download") { download(copy) }
@@ -194,6 +199,8 @@ class DownloadService : Service() {
             nm.notify(NOTIFICATION_ID, notification(doneMessage, -1, false))
         } finally {
             folder.deleteRecursively()
+            try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (_: Exception) {}
+            wakeLock = null
             currentFast = null
             currentFallback = null
             running = false
