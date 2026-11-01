@@ -31,6 +31,33 @@ jobs:
         run: gradle --no-daemon :app:testDebugUnitTest
       - name: Build APK
         run: gradle --no-daemon :app:assembleDebug
+      - name: Verify APK ZIP signature and manifest
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          unzip -tq "$APK" | tail -1
+          TOOLS_DIR="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          "$TOOLS_DIR/apksigner" verify --verbose --print-certs "$APK"
+          "$TOOLS_DIR/aapt" dump badging "$APK" | grep -E "^(package:|sdkVersion:|targetSdkVersion:)"
+          sha256sum "$APK"
+      - name: Inspect signing certificates of earlier releases
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p previous
+          TOOLS_DIR="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          for VERSION in 2.2.0 2.3.0; do
+            if gh release download "v$VERSION" --pattern "offtube-$VERSION.apk" --dir previous; then
+              echo "=== v$VERSION ==="
+              "$TOOLS_DIR/apksigner" verify --print-certs "previous/offtube-$VERSION.apk" | grep "Signer #1 certificate SHA-256 digest" || true
+              unzip -tq "previous/offtube-$VERSION.apk" | tail -1
+            fi
+          done
+          echo "=== candidate v2.3.1 ==="
+          "$TOOLS_DIR/apksigner" verify --print-certs app/build/outputs/apk/debug/app-debug.apk | grep "Signer #1 certificate SHA-256 digest"
       - uses: actions/upload-artifact@v4
         if: success()
         with:
@@ -43,16 +70,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="v2.3.0"
+          TAG="v2.3.1"
           APK="app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
           mkdir -p release
-          cp "$APK" release/offtube-2.3.0.apk
+          cp "$APK" release/offtube-2.3.1.apk
+          (cd release && sha256sum offtube-2.3.1.apk > offtube-2.3.1.apk.sha256)
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" \
               --target "$GITHUB_SHA" \
-              --title "offtube 2.3.0 — фоновые загрузки и быстрый отклик" \
-              --notes "Offtube 2.3.0: Android Foreground Service с уведомлением и отменой, поиск форматов с ограничением ожидания интерфейса в 5 секунд, запуск скачивания без повторной предварительной проверки. Android debug APK. Время ответа удалённого сервера зависит от сети." \
+              --title "offtube 2.3.1 — проверенная установка APK" \
+              --notes "Offtube 2.3.1: проверка целостности ZIP, подписи APK и Android Manifest на CI до публикации. Сохраняет фоновые загрузки. APK подписан временным debug-ключом CI; при конфликте подписи со старой версией её придётся удалить. Рекомендуется скачивать через внешний браузер и проверять контрольную сумму SHA-256." \
               --latest
           fi
-          gh release upload "$TAG" release/offtube-2.3.0.apk --clobber
+          gh release upload "$TAG" release/offtube-2.3.1.apk release/offtube-2.3.1.apk.sha256 --clobber
