@@ -27,7 +27,6 @@ class YtDlpFallback(private val context: Context) {
         synchronized(lock) {
             if (!ready) {
                 YoutubeDL.getInstance().init(context.applicationContext)
-                FFmpeg.getInstance().init(context.applicationContext)
                 ready = true
             }
         }
@@ -43,9 +42,9 @@ class YtDlpFallback(private val context: Context) {
         r.addOption("--skip-download")
         r.addOption("--no-playlist")
         r.addOption("--no-warnings")
-        r.addOption("--socket-timeout", "15")
-        r.addOption("--extractor-retries", "1")
-        val output = YoutubeDL.getInstance().execute(r).out
+        r.addOption("--socket-timeout", "5")
+        r.addOption("--extractor-retries", "0")
+        val output = YoutubeDL.getInstance().execute(r, processId, null).out
         val jsonIndex = output.indexOf('{')
         if (jsonIndex < 0) throw IOException("Не удалось получить информацию о видео")
         val json = JSONObject(output.substring(jsonIndex))
@@ -87,6 +86,7 @@ class YtDlpFallback(private val context: Context) {
                  progress: (Int, String) -> Unit, expected: FormatSize? = null): File {
         cancelled = false
         init()
+        FFmpeg.getInstance().init(context.applicationContext)
         dir.mkdirs()
         dir.listFiles()?.forEach { it.delete() }
         fun request(): YoutubeDLRequest = YoutubeDLRequest(link).apply {
