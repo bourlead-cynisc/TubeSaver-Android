@@ -17,6 +17,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.text.InputType
 import android.text.TextWatcher
 import android.text.Editable
@@ -130,6 +131,12 @@ class MainActivity : Activity() {
         window.decorView.systemUiVisibility = 0
         render()
         receiveSharedLink(intent)
+        // Warm Python/FFmpeg in the background once per app process.
+        // This overlaps engine initialization with the user pasting the link.
+        thread(name = "offtube-engine-prewarm") {
+            try { YtDlpFallback(applicationContext).warmUp() }
+            catch (_: Exception) { /* inspection will retry initialization */ }
+        }
         // Android 13+: foreground downloads can still run without this permission,
         // but the notification is easier to access when the user grants it.
         if (Build.VERSION.SDK_INT >= 33 &&
@@ -409,16 +416,9 @@ class MainActivity : Activity() {
         if (busy) return
         val (link, platform) = validLink() ?: return
         setBusy(true)
+        val inspectStartedAt = SystemClock.elapsedRealtime()
         val token = ++inspectToken
-        handler.postDelayed({
-            if (token == inspectToken && busy && !isDownloading) {
-                inspectToken++
-                fallback?.cancel()
-                setBusy(false)
-                title.text = "Поиск дольше 5 секунд"
-                status.text = "Сервер отвечает медленно. Можно скачать в автоматическом качестве."
-            }
-        }, 5000L)
+        // No artificial deadline: keep looking until extraction finishes or fails.
         title.text = "Получаем информацию"
         updateProgress(-1, "Проверяем доступные форматы…")
         thread(name = "offtube-inspect") {
@@ -454,7 +454,11 @@ class MainActivity : Activity() {
                     }
                     title.text = selectedTitle
                     quality.text = if (quickChoices.isNotEmpty()) "⌄  ${quickChoices[0].label}" else "⌄  Лучшее доступное · MP4 со звуком" + sizeLabel(slowBestSize)
-                    status.text = if (quick) "Быстрый движок готов · ${quickChoices.size} форматов" else "Форматы получены · резервный движок"
+                    val elapsed = (SystemClock.elapsedRealtime() - inspectStartedAt) / 1000.0
+                    status.text = if (quick)
+                        "Найдено ${quickChoices.size} форматов за ${String.format(java.util.Locale.US, "%.1f", elapsed)} с"
+                    else
+                        "Форматы найдены за ${String.format(java.util.Locale.US, "%.1f", elapsed)} с"
                     setBusy(false)
                 }
             } catch (e: Exception) {
