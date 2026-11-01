@@ -22,6 +22,8 @@ class YtDlpFallback(private val context: Context) {
         @Volatile private var ready = false
         @Volatile private var ffmpegReady = false
         private val ffmpegLock = Any()
+        private const val BUNDLED_RUNTIME_VERSION = "yt-dlp-2026.10.26-ejs-0.8.0"
+
     }
 
     private fun init() {
@@ -29,8 +31,35 @@ class YtDlpFallback(private val context: Context) {
         synchronized(lock) {
             if (!ready) {
                 YoutubeDL.getInstance().init(context.applicationContext)
+                // The wrapper only copies R.raw.ytdlp when no file exists.
+                // An app upgrade therefore otherwise keeps the OLD executable.
+                installBundledRuntimeIfNeeded()
                 ready = true
             }
+        }
+    }
+
+    private fun installBundledRuntimeIfNeeded() {
+        val prefs = context.getSharedPreferences("offtube_runtime", Context.MODE_PRIVATE)
+        if (prefs.getString("installed", "") == BUNDLED_RUNTIME_VERSION) return
+        val dir = File(context.noBackupFilesDir, "youtubedl-android/yt-dlp")
+        if (!dir.isDirectory && !dir.mkdirs()) throw IOException("Нет каталога движка")
+        val target = File(dir, "yt-dlp")
+        val next = File(dir, "yt-dlp.next")
+        try {
+            context.resources.openRawResource(R.raw.ytdlp).use { input ->
+                next.outputStream().buffered().use { output -> input.copyTo(output) }
+            }
+            if (!next.isFile || next.length() == 0L) throw IOException("Пустой движок загрузки")
+            if (target.exists() && !target.delete()) throw IOException("Не удалось заменить старый движок")
+            if (!next.renameTo(target)) {
+                next.copyTo(target, overwrite = true)
+                next.delete()
+            }
+            if (!prefs.edit().putString("installed", BUNDLED_RUNTIME_VERSION).commit())
+                throw IOException("Не удалось сохранить версию движка")
+        } finally {
+            if (next.exists()) next.delete()
         }
     }
 
