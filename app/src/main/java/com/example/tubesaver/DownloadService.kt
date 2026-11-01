@@ -157,12 +157,8 @@ class DownloadService : Service() {
             val expected = request.getLongExtra("estimatedBytes", -1).takeIf { it > 0 }?.let {
                 YtDlpFallback.FormatSize(it, request.getBooleanExtra("approximate", true))
             }
-            // Start is immediate; slow remote extraction is never done on the UI thread.
-            thread(name = "offtube-network-watchdog", isDaemon = true) {
-                Thread.sleep(5000)
-                if (running && lastProgress < 0 && !cancelled)
-                    progress(-1, "Сервер отвечает медленно, продолжаем в фоне…")
-            }
+            // The foreground service is already running; do not impose a
+            // timer on remote preparation or unnecessarily restart extraction.
             val downloaded = if (choice != null) {
                 audioOnly = choice.audioOnly
                 val fast = engine ?: FastYoutubeEngine()

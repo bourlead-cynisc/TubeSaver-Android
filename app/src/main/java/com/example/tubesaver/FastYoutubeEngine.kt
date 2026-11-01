@@ -124,7 +124,7 @@ class FastYoutubeEngine {
     fun download(link: String, choice: Choice, folder: File, progress: (Int, String) -> Unit): File {
         cancelled = false
         // Extracted Googlevideo addresses are short-lived; use fresh URLs when needed.
-        val initial = if (inspectedLink != link || SystemClock.elapsedRealtime() - inspectedAt > 30_000L) {
+        val initial = if (inspectedLink != link || SystemClock.elapsedRealtime() - inspectedAt > 90_000L) {
             progress(-1, "Обновляем адреса потоков…")
             matchingChoice(inspect(link).choices, choice)
         } else choice
