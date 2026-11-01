@@ -25,3 +25,9 @@ Minimal offline video downloader for YouTube, Rutube, and VK Video.
 - Black/red theme matching the user supplied launcher icon, including quality picker and selected source.
 - Size per quality uses exact filesize first, filesize_approx second, then a marked estimate based on bitrate and duration.
 - Audio/video track sizes are added only for the actual MP4+M4A format selection; missing information remains unknown.
+
+## 2.3.0
+- Background downloads run in an Android foreground dataSync service with persistent notification, progress and cancellation. Closing or swiping away the UI does not stop the active service.
+- Force-stop, OS service timeouts and some device battery restrictions can interrupt transfers; this is not an unconditional background guarantee.
+- Format inspection gives user feedback within five seconds. When remote extraction is slower, automatic-quality download remains possible. The full response from YouTube/VK/Rutube cannot be guaranteed inside five seconds.
+- Download starts a foreground notification immediately, reuses fast-path cached formats, and avoids a redundant preview request; actual network transfer startup still depends on server and VPN.

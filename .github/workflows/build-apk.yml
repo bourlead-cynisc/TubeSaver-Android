@@ -43,16 +43,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="v2.2.0"
+          TAG="v2.3.0"
           APK="app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
           mkdir -p release
-          cp "$APK" release/offtube-2.2.0.apk
+          cp "$APK" release/offtube-2.3.0.apk
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" \
               --target "$GITHUB_SHA" \
-              --title "offtube 2.2.0 — красная тема и расчёт размера" \
-              --notes "Offtube 2.2.0: чёрно-красная тема, размеры MP4 по filesize и приблизительный расчёт по битрейту и длительности. Android APK debug. Загружайте материалы, на которые у вас есть права." \
+              --title "offtube 2.3.0 — фоновые загрузки и быстрый отклик" \
+              --notes "Offtube 2.3.0: Android Foreground Service с уведомлением и отменой, поиск форматов с ограничением ожидания интерфейса в 5 секунд, запуск скачивания без повторной предварительной проверки. Android debug APK. Время ответа удалённого сервера зависит от сети." \
               --latest
           fi
-          gh release upload "$TAG" release/offtube-2.2.0.apk --clobber
+          gh release upload "$TAG" release/offtube-2.3.0.apk --clobber
