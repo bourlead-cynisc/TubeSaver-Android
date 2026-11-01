@@ -33,8 +33,17 @@ import android.widget.ScrollView
 import android.widget.TextView
 import java.io.File
 import kotlin.concurrent.thread
+import java.util.concurrent.Callable
+import java.util.concurrent.ExecutorCompletionService
+import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
+    private data class InspectionResult(
+        val fastVideo: FastYoutubeEngine.Video? = null,
+        val slowInfo: YtDlpFallback.Info? = null,
+        val fastEngine: FastYoutubeEngine? = null
+    )
+
     private val dark = Color.rgb(8, 9, 13)
     private val surface = Color.rgb(23, 25, 33)
     private val outline = Color.rgb(47, 49, 61)
@@ -423,44 +432,69 @@ class MainActivity : Activity() {
         title.text = "Получаем информацию"
         updateProgress(-1, "Проверяем доступные форматы…")
         thread(name = "offtube-inspect") {
+            val isYouTube = platform == SourceHosts.Platform.YOUTUBE
+            // Race both extractors. Do not wait for a failing NewPipe before
+            // launching yt-dlp, as their network delays used to accumulate.
+            val pool = Executors.newFixedThreadPool(if (isYouTube) 2 else 1)
+            val completion = ExecutorCompletionService<InspectionResult>(pool)
+            val quickWorker = if (isYouTube) FastYoutubeEngine() else null
+            val slowWorker = YtDlpFallback(applicationContext)
+            fallback = slowWorker
+            val quickTask = quickWorker?.let { engine ->
+                completion.submit(Callable {
+                    InspectionResult(fastVideo = engine.inspect(link), fastEngine = engine)
+                })
+            }
+            val slowTask = completion.submit(Callable {
+                InspectionResult(slowInfo = slowWorker.inspect(link))
+            })
+            var winner: InspectionResult? = null
+            var failure: Throwable? = null
             try {
-                val fast = platform == SourceHosts.Platform.YOUTUBE
-                var fastResult: FastYoutubeEngine.Video? = null
-                var slowResult: YtDlpFallback.Info? = null
-                if (fast) {
+                // No artificial timeout; first SUCCESS wins.
+                for (attempt in 0 until if (isYouTube) 2 else 1) {
                     try {
-                        val engine = FastYoutubeEngine()
-                        fastResult = engine.inspect(link)
-                        fastEngine = engine
-                    } catch (_: Exception) {
-                        slowResult = YtDlpFallback(this).also { fallback = it }.inspect(link)
+                        val candidate = completion.take().get()
+                        if (candidate.fastVideo != null || candidate.slowInfo != null) {
+                            winner = candidate
+                            break
+                        }
+                    } catch (e: Exception) {
+                        failure = e.cause ?: e
                     }
-                } else {
-                    slowResult = YtDlpFallback(this).also { fallback = it }.inspect(link)
+                    if (token != inspectToken || Thread.currentThread().isInterrupted) break
                 }
-                runOnUiThread {
-                    if (token != inspectToken || isDownloading || isFinishing) return@runOnUiThread
-                    analyzedLink = link
-                    selectedIndex = 0
-                    quick = fastResult != null
-                    quickChoices = fastResult?.choices ?: emptyList()
-                    slowHeights = slowResult?.heights ?: emptyList()
-                    slowSizes = slowResult?.sizes ?: emptyMap()
-                    slowBestSize = slowResult?.bestSize
-                    selectedTitle = fastResult?.title ?: slowResult?.title ?: "Видео"
-                    if (fastResult != null) {
-                        DownloadService.sessionLink = link
-                        DownloadService.engine = fastEngine
-                        DownloadService.sessionChoices = quickChoices
+                val selected = winner ?: throw (failure ?: java.io.IOException("Форматы недоступны"))
+                if (token == inspectToken && !isDownloading) {
+                    val fastResult = selected.fastVideo
+                    val slowResult = selected.slowInfo
+                    runOnUiThread {
+                        if (token != inspectToken || isDownloading || isFinishing) return@runOnUiThread
+                        analyzedLink = link
+                        selectedIndex = 0
+                        quick = fastResult != null
+                        quickChoices = fastResult?.choices ?: emptyList()
+                        slowHeights = slowResult?.heights ?: emptyList()
+                        slowSizes = slowResult?.sizes ?: emptyMap()
+                        slowBestSize = slowResult?.bestSize
+                        selectedTitle = fastResult?.title ?: slowResult?.title ?: "Видео"
+                        if (fastResult != null) {
+                            fastEngine = selected.fastEngine
+                            DownloadService.sessionLink = link
+                            DownloadService.engine = selected.fastEngine
+                            DownloadService.sessionChoices = quickChoices
+                        }
+                        title.text = selectedTitle
+                        quality.text = if (quickChoices.isNotEmpty())
+                            "⌄  \${quickChoices[0].label}"
+                        else "⌄  Лучшее доступное · MP4 со звуком" + sizeLabel(slowBestSize)
+                        val elapsed = (SystemClock.elapsedRealtime() - inspectStartedAt) / 1000.0
+                        val engineLabel = if (quick) "NewPipe" else "yt-dlp"
+                        val count = if (quick) quickChoices.size else slowHeights.size
+                        status.text = "Найдено $count качеств за " +
+                            String.format(java.util.Locale.US, "%.1f с", elapsed) + " · $engineLabel"
+                        setBusy(false)
                     }
-                    title.text = selectedTitle
-                    quality.text = if (quickChoices.isNotEmpty()) "⌄  ${quickChoices[0].label}" else "⌄  Лучшее доступное · MP4 со звуком" + sizeLabel(slowBestSize)
-                    val elapsed = (SystemClock.elapsedRealtime() - inspectStartedAt) / 1000.0
-                    status.text = if (quick)
-                        "Найдено ${quickChoices.size} форматов за ${String.format(java.util.Locale.US, "%.1f", elapsed)} с"
-                    else
-                        "Форматы найдены за ${String.format(java.util.Locale.US, "%.1f", elapsed)} с"
-                    setBusy(false)
                 }
             } catch (e: Exception) {
                 runOnUiThread {
@@ -469,6 +503,14 @@ class MainActivity : Activity() {
                     status.text = explain(e)
                     setBusy(false)
                 }
+            } finally {
+                if (winner?.fastVideo != null) {
+                    slowWorker.cancel()
+                    slowTask.cancel(true)
+                } else {
+                    quickTask?.cancel(true)
+                }
+                pool.shutdownNow()
             }
         }
     }
