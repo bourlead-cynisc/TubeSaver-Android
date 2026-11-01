@@ -82,6 +82,11 @@ class FastYoutubeEngine {
     private fun displayBytes(bytes: Long): String =
         String.format(Locale.US, "%.1f МБ", bytes.toDouble() / 1048576.0)
 
+    /** Initialize Java extractor in parallel with the first UI interaction. */
+    fun warmUp() {
+        initialize()
+    }
+
     fun inspect(url: String): Video {
         initialize()
         val info = StreamInfo.getInfo(url)

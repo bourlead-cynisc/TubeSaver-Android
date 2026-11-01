@@ -22,10 +22,13 @@ internal object MetadataCache {
         return File(context.cacheDir, "offtube-info-$digest.json")
     }
 
+    fun validAge(modifiedAt: Long, now: Long): Boolean =
+        modifiedAt > 0 && (now - modifiedAt) in 0..MAX_AGE_MS
+
     fun fresh(context: Context, link: String): File? {
         val file = file(context, link)
-        val age = System.currentTimeMillis() - file.lastModified()
-        return file.takeIf { it.isFile && it.length() > 0 && age in 0..MAX_AGE_MS }
+        return file.takeIf { it.isFile && it.length() > 0 &&
+            validAge(it.lastModified(), System.currentTimeMillis()) }
     }
 
     fun store(context: Context, link: String, infoJson: String) {

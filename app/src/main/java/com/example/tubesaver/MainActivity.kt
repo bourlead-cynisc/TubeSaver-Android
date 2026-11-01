@@ -134,8 +134,9 @@ class MainActivity : Activity() {
         // Warm Python/FFmpeg in the background once per app process.
         // This overlaps engine initialization with the user pasting the link.
         thread(name = "offtube-engine-prewarm") {
+            try { FastYoutubeEngine().warmUp() } catch (_: Exception) {}
             try { YtDlpFallback(applicationContext).warmUp() }
-            catch (_: Exception) { /* inspection will retry initialization */ }
+            catch (_: Exception) { /* inspection retries initialization */ }
         }
         // Android 13+: foreground downloads can still run without this permission,
         // but the notification is easier to access when the user grants it.
