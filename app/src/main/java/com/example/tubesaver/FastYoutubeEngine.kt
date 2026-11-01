@@ -43,8 +43,10 @@ class FastYoutubeEngine {
                     NewPipe.init(object : Downloader() {
                         override fun execute(request: Request): Response {
                             val conn = URL(request.url()).openConnection() as HttpURLConnection
-                            conn.connectTimeout = 12000
-                            conn.readTimeout = 18000
+                            // Fail fast on an unavailable endpoint; yt-dlp is already
+                            // running in parallel as a compatibility fallback.
+                            conn.connectTimeout = 6500
+                            conn.readTimeout = 8500
                             conn.instanceFollowRedirects = true
                             conn.requestMethod = request.httpMethod()
                             conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android 15; Mobile; rv:128.0) Gecko/128.0 Firefox/128.0")

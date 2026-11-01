@@ -452,7 +452,7 @@ class MainActivity : Activity() {
             var failure: Throwable? = null
             try {
                 // No artificial timeout; first SUCCESS wins.
-                for (attempt in 0 until if (isYouTube) 2 else 1) {
+                for (attempt in 0 until (if (isYouTube) 2 else 1)) {
                     try {
                         val candidate = completion.take().get()
                         if (candidate.fastVideo != null || candidate.slowInfo != null) {

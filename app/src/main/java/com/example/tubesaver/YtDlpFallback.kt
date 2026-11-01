@@ -62,6 +62,8 @@ class YtDlpFallback(private val context: Context) {
         val r = YoutubeDLRequest(link)
         if (SourceHosts.detect(link) == SourceHosts.Platform.YOUTUBE) {
             r.addOption("--remote-components", "ejs:github")
+            // Avoid extra HLS/DASH manifest fetches: MP4 variants use direct formats.
+            r.addOption("--extractor-args", "youtube:skip=hls,dash")
         }
         r.addOption("--dump-single-json")
         r.addOption("--skip-download")
@@ -70,11 +72,14 @@ class YtDlpFallback(private val context: Context) {
         // Network timeouts are failure recovery, not a five-second UI cutoff.
         r.addOption("--socket-timeout", "12")
         r.addOption("--extractor-retries", "1")
+        if (cancelled) throw IOException("Поиск отменён")
         val output = YoutubeDL.getInstance().execute(r, processId, null).out
+        if (cancelled) throw IOException("Поиск отменён")
         val jsonIndex = output.indexOf('{')
         if (jsonIndex < 0) throw IOException("Не удалось получить информацию о видео")
         val json = JSONObject(output.substring(jsonIndex))
         // Reuse this very same resolved info-json in the download command.
+        if (cancelled) throw IOException("Поиск отменён")
         MetadataCache.store(context, link, json.toString())
         return parseInfo(json)
     }
@@ -126,9 +131,8 @@ class YtDlpFallback(private val context: Context) {
             if (cached != null) {
                 addOption("--load-info-json", cached.absolutePath)
             } else if (SourceHosts.detect(link) == SourceHosts.Platform.YOUTUBE) {
-                // YouTube now requires external JS challenge solvers.
-                // QuickJS is provisioned by the Android wrapper; fetch EJS from yt-dlp's official releases.
                 addOption("--remote-components", "ejs:github")
+                addOption("--extractor-args", "youtube:skip=hls,dash")
             }
             addOption("--no-playlist")
             addOption("--no-warnings")
