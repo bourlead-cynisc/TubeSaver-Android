@@ -48,3 +48,6 @@ Minimal offline video downloader for YouTube, Rutube, and VK Video.
 - Network read/connect timeouts in NewPipe lowered to fail over sooner when that endpoint stalls; yt-dlp still runs concurrently.
 - The UI reports measured search duration and selected extractor; no result is discarded at five seconds.
 - Five seconds remains a target, not a network guarantee. Verify on a device with the same VPN and URL.
+
+## 2.5.1
+- Refreshes the embedded yt-dlp executable in app-private noBackup storage when this APK is first opened. The upstream Android wrapper normally copies raw/ytdlp only when the file does not yet exist, leaving an older binary on upgrades.

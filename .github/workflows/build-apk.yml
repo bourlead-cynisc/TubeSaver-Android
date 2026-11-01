@@ -93,17 +93,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="v2.5.0"
+          TAG="v2.5.1"
           APK="app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
           mkdir -p release
-          cp "$APK" release/offtube-2.5.0.apk
-          (cd release && sha256sum offtube-2.5.0.apk > offtube-2.5.0.apk.sha256)
+          cp "$APK" release/offtube-2.5.1.apk
+          (cd release && sha256sum offtube-2.5.1.apk > offtube-2.5.1.apk.sha256)
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" \
               --target "$GITHUB_SHA" \
-              --title "offtube 2.5.0 — параллельный поиск качества" \
-              --notes "Offtube 2.5.0: NewPipe и yt-dlp ищут YouTube форматы параллельно, первый успешный результат показывается без ожидания второго; пропускаются лишние запросы HLS/DASH. EJS-пакет вшит локально и проверен в CI, устранена зависимость от загрузки EJS через GitHub во время поиска. Нет искусственного таймаута 5 секунд. Реальная задержка зависит от соединения и сервера; гарантия пяти секунд не заявляется." \
+              --title "offtube 2.5.1 — быстрый поиск и локальный EJS" \
+              --notes "Offtube 2.5.1: параллельный NewPipe/yt-dlp поиск, первый успешный результат, локальный EJS 0.8.0 и обновление встроенного yt-dlp при переходе со старого APK, без дополнительного обращения к GitHub за EJS во время анализа. Сохранены фоновые загрузки. Цель 5 секунд, но время зависит от сервиса и VPN." \
               --latest
           fi
-          gh release upload "$TAG" release/offtube-2.5.0.apk release/offtube-2.5.0.apk.sha256 --clobber
+          gh release upload "$TAG" release/offtube-2.5.1.apk release/offtube-2.5.1.apk.sha256 --clobber
