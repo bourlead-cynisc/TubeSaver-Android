@@ -1,10 +1,13 @@
 package com.example.tubesaver
 
+import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
@@ -120,6 +123,12 @@ class MainActivity : Activity() {
         window.decorView.systemUiVisibility = 0
         render()
         receiveSharedLink(intent)
+        // Android 13+: foreground downloads can still run without this permission,
+        // but the notification is easier to access when the user grants it.
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 23)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
