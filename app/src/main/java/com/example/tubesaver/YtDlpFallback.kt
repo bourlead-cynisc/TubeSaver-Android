@@ -20,6 +20,8 @@ class YtDlpFallback(private val context: Context) {
     companion object {
         private val lock = Any()
         @Volatile private var ready = false
+        @Volatile private var ffmpegReady = false
+        private val ffmpegLock = Any()
     }
 
     private fun init() {
@@ -32,7 +34,30 @@ class YtDlpFallback(private val context: Context) {
         }
     }
 
+    /** Pre-initialize native/Python binaries while the user is choosing a format. */
+    fun warmUp() {
+        init()
+        initFfmpeg()
+    }
+
+    private fun initFfmpeg() {
+        if (ffmpegReady) return
+        synchronized(ffmpegLock) {
+            if (!ffmpegReady) {
+                FFmpeg.getInstance().init(context.applicationContext)
+                ffmpegReady = true
+            }
+        }
+    }
+
     fun inspect(link: String): Info {
+        MetadataCache.fresh(context, link)?.let { cached ->
+            try {
+                return parseInfo(JSONObject(cached.readText(Charsets.UTF_8)))
+            } catch (_: Exception) {
+                MetadataCache.invalidate(context, link)
+            }
+        }
         init()
         val r = YoutubeDLRequest(link)
         if (SourceHosts.detect(link) == SourceHosts.Platform.YOUTUBE) {
@@ -42,12 +67,19 @@ class YtDlpFallback(private val context: Context) {
         r.addOption("--skip-download")
         r.addOption("--no-playlist")
         r.addOption("--no-warnings")
-        r.addOption("--socket-timeout", "5")
-        r.addOption("--extractor-retries", "0")
+        // Network timeouts are failure recovery, not a five-second UI cutoff.
+        r.addOption("--socket-timeout", "12")
+        r.addOption("--extractor-retries", "1")
         val output = YoutubeDL.getInstance().execute(r, processId, null).out
         val jsonIndex = output.indexOf('{')
         if (jsonIndex < 0) throw IOException("Не удалось получить информацию о видео")
         val json = JSONObject(output.substring(jsonIndex))
+        // Reuse this very same resolved info-json in the download command.
+        MetadataCache.store(context, link, json.toString())
+        return parseInfo(json)
+    }
+
+    private fun parseInfo(json: JSONObject): Info {
         val formats = json.optJSONArray("formats")
         val entries = (0 until (formats?.length() ?: 0)).mapNotNull { index ->
             val format = formats?.optJSONObject(index) ?: return@mapNotNull null
@@ -86,11 +118,14 @@ class YtDlpFallback(private val context: Context) {
                  progress: (Int, String) -> Unit, expected: FormatSize? = null): File {
         cancelled = false
         init()
-        FFmpeg.getInstance().init(context.applicationContext)
+        initFfmpeg()
         dir.mkdirs()
         dir.listFiles()?.forEach { it.delete() }
-        fun request(): YoutubeDLRequest = YoutubeDLRequest(link).apply {
-            if (SourceHosts.detect(link) == SourceHosts.Platform.YOUTUBE) {
+        fun request(cached: File?): YoutubeDLRequest =
+            YoutubeDLRequest(if (cached != null) emptyList<String>() else listOf(link)).apply {
+            if (cached != null) {
+                addOption("--load-info-json", cached.absolutePath)
+            } else if (SourceHosts.detect(link) == SourceHosts.Platform.YOUTUBE) {
                 // YouTube now requires external JS challenge solvers.
                 // QuickJS is provisioned by the Android wrapper; fetch EJS from yt-dlp's official releases.
                 addOption("--remote-components", "ejs:github")
@@ -132,7 +167,18 @@ class YtDlpFallback(private val context: Context) {
         try {
             // yt-dlp's built-in downloader can handle video fragments and YouTube headers
             // without introducing a second aria2c failure/fallback cycle.
-            YoutubeDL.getInstance().execute(request(), processId, callback)
+            val fresh = MetadataCache.fresh(context, link)
+            try {
+                YoutubeDL.getInstance().execute(request(fresh), processId, callback)
+            } catch (cacheError: Exception) {
+                if (fresh == null || cancelled) throw cacheError
+                // A signed URL may have expired despite a fresh info-json.
+                // Retry extraction only on a genuine cache failure.
+                MetadataCache.invalidate(context, link)
+                dir.listFiles()?.forEach { it.delete() }
+                progress(-1, "Адрес видеопотока устарел · обновляем…")
+                YoutubeDL.getInstance().execute(request(null), processId, callback)
+            }
             if (cancelled) throw IOException("Загрузка отменена")
             val extension = if (audioOnly) "mp3" else "mp4"
             return dir.listFiles()?.filter { it.isFile && it.extension.equals(extension, true) }
