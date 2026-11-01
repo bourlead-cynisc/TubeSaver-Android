@@ -52,12 +52,12 @@ jobs:
           for VERSION in 2.2.0 2.3.0; do
             if gh release download "v$VERSION" --pattern "offtube-$VERSION.apk" --dir previous; then
               echo "=== v$VERSION ==="
-              "$TOOLS_DIR/apksigner" verify --print-certs "previous/offtube-$VERSION.apk" | grep "Signer #1 certificate SHA-256 digest" || true
+              "$TOOLS_DIR/apksigner" verify --verbose --print-certs "previous/offtube-$VERSION.apk" | grep "certificate SHA-256 digest"
               unzip -tq "previous/offtube-$VERSION.apk" | tail -1
             fi
           done
           echo "=== candidate v2.3.1 ==="
-          "$TOOLS_DIR/apksigner" verify --print-certs app/build/outputs/apk/debug/app-debug.apk | grep "Signer #1 certificate SHA-256 digest"
+          "$TOOLS_DIR/apksigner" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk | grep "certificate SHA-256 digest"
       - uses: actions/upload-artifact@v4
         if: success()
         with:
