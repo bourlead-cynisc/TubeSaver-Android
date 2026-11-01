@@ -40,3 +40,11 @@ Minimal offline video downloader for YouTube, Rutube, and VK Video.
 - Keep foreground service startup asynchronous, remove the unrelated five-second watchdog, and display actual elapsed format search time.
 - **Performance target, not a guarantee:** Remote DNS, VPN, JavaScript challenges, and source-server latency can exceed five seconds. No artificial timeout is imposed.
 - Old debug release signatures are generated independently by GitHub Actions runners; uninstall the previous build before installing if Android reports a signature conflict.
+
+## 2.5.0
+- On YouTube, NewPipe and yt-dlp look up formats concurrently. The first successful extractor wins instead of the previous sequential approach that could add their delays.
+- YouTube yt-dlp skips unneeded HLS and DASH manifest requests for the current MP4 mode.
+- Bundles the version-matched, SHA256-verified yt-dlp-ejs 0.8.0 wheel inside the yt-dlp zipapp during GitHub Actions. This prevents a per-video GitHub release asset request for challenge solver scripts when local EJS works.
+- Network read/connect timeouts in NewPipe lowered to fail over sooner when that endpoint stalls; yt-dlp still runs concurrently.
+- The UI reports measured search duration and selected extractor; no result is discarded at five seconds.
+- Five seconds remains a target, not a network guarantee. Verify on a device with the same VPN and URL.

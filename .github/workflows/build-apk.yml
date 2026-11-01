@@ -27,6 +27,27 @@ jobs:
             -o app/src/main/res/raw/ytdlp \
             https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp
           echo "e51e69e89489f199530f13d32a4342da3ddb2cf34842f364603a066db05afbf3  app/src/main/res/raw/ytdlp" | sha256sum -c -
+      - name: Bundle locally verified yt-dlp EJS solver (no per-video GitHub download)
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --connect-timeout 15 --max-time 120 \
+            -o /tmp/yt-dlp-ejs.whl \
+            https://github.com/yt-dlp/ejs/releases/download/0.8.0/yt_dlp_ejs-0.8.0-py3-none-any.whl
+          echo "79300e5fca7f937a1eeede11f0456862c1b41107ce1d726871e0207424f4bdb4  /tmp/yt-dlp-ejs.whl" | sha256sum -c -
+          python3 - <<'PY'
+          import zipfile
+          target = "app/src/main/res/raw/ytdlp"
+          with zipfile.ZipFile("/tmp/yt-dlp-ejs.whl") as source, zipfile.ZipFile(target, "a") as dest:
+              entries = [e for e in source.infolist() if e.filename.startswith("yt_dlp_ejs/")]
+              assert entries, "missing EJS files"
+              for entry in entries:
+                  dest.writestr(entry, source.read(entry))
+          import sys
+          sys.path.insert(0, target)
+          from yt_dlp_ejs.yt.solver import core
+          assert len(core()) > 1000, "embedded EJS could not load from zipapp"
+          print("Local EJS solver verified inside bundled yt-dlp zipapp")
+          PY
       - name: Test yt-dlp info-json replay without a second extraction
         run: |
           set -euo pipefail
@@ -72,17 +93,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="v2.4.0"
+          TAG="v2.5.0"
           APK="app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
           mkdir -p release
-          cp "$APK" release/offtube-2.4.0.apk
-          (cd release && sha256sum offtube-2.4.0.apk > offtube-2.4.0.apk.sha256)
+          cp "$APK" release/offtube-2.5.0.apk
+          (cd release && sha256sum offtube-2.5.0.apk > offtube-2.5.0.apk.sha256)
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" \
               --target "$GITHUB_SHA" \
-              --title "offtube 2.4.0 — ускоренный поиск без таймаута" \
-              --notes "Offtube 2.4.0: поиск качества больше не отменяется после пяти секунд. Движки подготавливаются в фоне, результат yt-dlp повторно используется при скачивании без вторичного запроса к странице, подписанные ссылки кешируются на короткое время с обновлением при истечении. APK прошёл CI-проверки. Время запросов зависит от сайта и VPN. Debug-подпись GitHub Actions может отличаться от предыдущей версии." \
+              --title "offtube 2.5.0 — параллельный поиск качества" \
+              --notes "Offtube 2.5.0: NewPipe и yt-dlp ищут YouTube форматы параллельно, первый успешный результат показывается без ожидания второго; пропускаются лишние запросы HLS/DASH. EJS-пакет вшит локально и проверен в CI, устранена зависимость от загрузки EJS через GitHub во время поиска. Нет искусственного таймаута 5 секунд. Реальная задержка зависит от соединения и сервера; гарантия пяти секунд не заявляется." \
               --latest
           fi
-          gh release upload "$TAG" release/offtube-2.4.0.apk release/offtube-2.4.0.apk.sha256 --clobber
+          gh release upload "$TAG" release/offtube-2.5.0.apk release/offtube-2.5.0.apk.sha256 --clobber
