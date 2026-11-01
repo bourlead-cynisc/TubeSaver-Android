@@ -10,8 +10,8 @@ android {
         applicationId = "com.example.tubesaver"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "2.3.1"
+        versionCode = 8
+        versionName = "2.4.0"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

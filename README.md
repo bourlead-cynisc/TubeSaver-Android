@@ -31,3 +31,12 @@ Minimal offline video downloader for YouTube, Rutube, and VK Video.
 - Force-stop, OS service timeouts and some device battery restrictions can interrupt transfers; this is not an unconditional background guarantee.
 - Format inspection gives user feedback within five seconds. When remote extraction is slower, automatic-quality download remains possible. The full response from YouTube/VK/Rutube cannot be guaranteed inside five seconds.
 - Download starts a foreground notification immediately, reuses fast-path cached formats, and avoids a redundant preview request; actual network transfer startup still depends on server and VPN.
+
+## 2.4.0 · More responsive format search and preparation
+- The old five-second **cancellation** has been removed entirely: metadata extraction runs until completion, a real error, or a user change of URL.
+- Prewarm NewPipe, the yt-dlp runtime, and FFmpeg once off the main thread while the user opens the app and enters a URL. UI stays interactive.
+- Cache yt-dlp resolved `--dump-single-json` information per URL for up to 90 seconds, and pass it to `--load-info-json` on download. This skips repeating extraction for a recently inspected VK/Rutube/YouTube link.
+- Cache direct NewPipe YouTube format URLs for 90 seconds instead of 30, with existing refresh-on-403 fallback.
+- Keep foreground service startup asynchronous, remove the unrelated five-second watchdog, and display actual elapsed format search time.
+- **Performance target, not a guarantee:** Remote DNS, VPN, JavaScript challenges, and source-server latency can exceed five seconds. No artificial timeout is imposed.
+- Old debug release signatures are generated independently by GitHub Actions runners; uninstall the previous build before installing if Android reports a signature conflict.

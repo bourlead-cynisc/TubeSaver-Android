@@ -27,6 +27,25 @@ jobs:
             -o app/src/main/res/raw/ytdlp \
             https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp
           echo "e51e69e89489f199530f13d32a4342da3ddb2cf34842f364603a066db05afbf3  app/src/main/res/raw/ytdlp" | sha256sum -c -
+      - name: Test yt-dlp info-json replay without a second extraction
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          data = {
+              "id": "cached-video",
+              "title": "offtube-cache-smoke",
+              "url": "https://example.org/video.mp4",
+              "webpage_url": "https://example.org/video.mp4",
+              "ext": "mp4",
+              "extractor": "generic",
+              "extractor_key": "Generic"
+          }
+          with open("/tmp/offtube-smoke.info.json", "w") as f:
+              json.dump(data, f)
+          PY
+          RESULT="$(python3 app/src/main/res/raw/ytdlp --load-info-json /tmp/offtube-smoke.info.json --simulate --print title)"
+          test "$RESULT" = "offtube-cache-smoke"
       - name: Unit tests
         run: gradle --no-daemon :app:testDebugUnitTest
       - name: Build APK
@@ -41,23 +60,6 @@ jobs:
           "$TOOLS_DIR/apksigner" verify --verbose --print-certs "$APK"
           "$TOOLS_DIR/aapt" dump badging "$APK" | grep -E "^(package:|sdkVersion:|targetSdkVersion:)"
           sha256sum "$APK"
-      - name: Inspect signing certificates of earlier releases
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p previous
-          TOOLS_DIR="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-          for VERSION in 2.2.0 2.3.0; do
-            if gh release download "v$VERSION" --pattern "offtube-$VERSION.apk" --dir previous; then
-              echo "=== v$VERSION ==="
-              "$TOOLS_DIR/apksigner" verify --verbose --print-certs "previous/offtube-$VERSION.apk" | grep "certificate SHA-256 digest"
-              unzip -tq "previous/offtube-$VERSION.apk" | tail -1
-            fi
-          done
-          echo "=== candidate v2.3.1 ==="
-          "$TOOLS_DIR/apksigner" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk | grep "certificate SHA-256 digest"
       - uses: actions/upload-artifact@v4
         if: success()
         with:
@@ -70,17 +72,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="v2.3.1"
+          TAG="v2.4.0"
           APK="app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
           mkdir -p release
-          cp "$APK" release/offtube-2.3.1.apk
-          (cd release && sha256sum offtube-2.3.1.apk > offtube-2.3.1.apk.sha256)
+          cp "$APK" release/offtube-2.4.0.apk
+          (cd release && sha256sum offtube-2.4.0.apk > offtube-2.4.0.apk.sha256)
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" \
               --target "$GITHUB_SHA" \
-              --title "offtube 2.3.1 — проверенная установка APK" \
-              --notes "Offtube 2.3.1: проверка целостности ZIP, подписи APK и Android Manifest на CI до публикации. Сохраняет фоновые загрузки. APK подписан временным debug-ключом CI; при конфликте подписи со старой версией её придётся удалить. Рекомендуется скачивать через внешний браузер и проверять контрольную сумму SHA-256." \
+              --title "offtube 2.4.0 — ускоренный поиск без таймаута" \
+              --notes "Offtube 2.4.0: поиск качества больше не отменяется после пяти секунд. Движки подготавливаются в фоне, результат yt-dlp повторно используется при скачивании без вторичного запроса к странице, подписанные ссылки кешируются на короткое время с обновлением при истечении. APK прошёл CI-проверки. Время запросов зависит от сайта и VPN. Debug-подпись GitHub Actions может отличаться от предыдущей версии." \
               --latest
           fi
-          gh release upload "$TAG" release/offtube-2.3.1.apk release/offtube-2.3.1.apk.sha256 --clobber
+          gh release upload "$TAG" release/offtube-2.4.0.apk release/offtube-2.4.0.apk.sha256 --clobber
